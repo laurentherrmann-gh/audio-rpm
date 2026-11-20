@@ -1,21 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Pipeline } from '../public/pipeline.js';
 import { constantSchedule, synthesize } from '../public/engine-model.js';
+import { replay } from '../tools/lib/audio.js';
 
-const fs = 48000, D = 4, hop = 256;
+const fs = 48000;
 
 function runConstant(rpm, cfg = {}, seconds = 1.5) {
   const signal = synthesize(constantSchedule(rpm, seconds), { fs, seconds, cylinders: 4 });
-  const pipe = new Pipeline(fs, D, cfg);
   let r = null;
-  for (let end = hop; end <= signal.length; end += hop) {
-    const raw = signal.subarray(end - hop, end);
-    const dec = new Float32Array(hop / D);
-    for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
-    pipe.push(raw, dec);
-    r = pipe.step(end / fs);
-  }
+  replay(signal, fs, cfg, (t, res) => { r = res; }); // the page's signal path: low-pass, then decimate
   return r;
 }
 

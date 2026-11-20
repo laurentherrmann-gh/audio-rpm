@@ -49,11 +49,12 @@ export function lowpass(x, fs, fc) {
 }
 
 /**
- * Feed `samples` through a new Pipeline in 256-sample chunks; call onStep(t, result, pipe) after each.
+ * Feed `samples` through a new Pipeline in `hop`-sample chunks, low-passed and decimated as the page
+ * does; call onStep(t, result, pipe) after each.
  * @returns {Pipeline}
  */
-export function replay(samples, fs, cfg, onStep) {
-  const D = 2 ** Math.round(Math.log2(fs / 12000)) || 1, hop = 256;
+export function replay(samples, fs, cfg, onStep, hop = 256) {
+  const D = 2 ** Math.round(Math.log2(fs / 12000)) || 1;
   const low = lowpass(samples, fs, Math.min(2500, (0.4 * fs) / D));
   const pipe = new Pipeline(fs, D, cfg);
   for (let end = hop; end <= samples.length; end += hop) {
@@ -61,7 +62,7 @@ export function replay(samples, fs, cfg, onStep) {
     for (let i = 0; i < dec.length; i++) dec[i] = low[end - hop + i * D];
     pipe.push(samples.subarray(end - hop, end), dec);
     const t = end / fs;
-    onStep(t, pipe.step(t), pipe);
+    onStep?.(t, pipe.step(t), pipe);
   }
   return pipe;
 }

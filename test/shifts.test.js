@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ShiftDetector } from '../public/detectors/shifts.js';
+import { replay } from '../tools/lib/audio.js';
 import { Pipeline } from '../public/pipeline.js';
 import { gearAt, makeSchedule, makeStageSchedule, rpmAt, scheduleDuration, shiftsIn, synthesize } from '../public/engine-model.js';
 
@@ -63,19 +64,14 @@ test('the gear is unknown until the car has been standing, then counted and kept
 });
 
 test('pipeline: shifts and gear from the sound of the stage drive', () => {
-  const fs = 48000, D = 4, hop = 256, stage = makeStageSchedule(), truth = shiftsIn(stage), T = scheduleDuration(stage);
+  const fs = 48000, stage = makeStageSchedule(), truth = shiftsIn(stage), T = scheduleDuration(stage);
   const signal = synthesize(stage, { fs, seconds: T, cylinders: 4 });
-  const pipe = new Pipeline(fs, D, { cylinders: 4, idle: 900, redline: 7500 });
   const found = [];
   let right = 0, n = 0;
-  for (let end = hop; end <= signal.length; end += hop) {
-    const raw = signal.subarray(end - hop, end), dec = new Float32Array(hop / D);
-    for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
-    pipe.push(raw, dec);
-    const t = end / fs, r = pipe.step(t);
+  replay(signal, fs, { cylinders: 4, idle: 900, redline: 7500 }, (t, r) => {
     if (r.gear.last && r.gear.last !== found.at(-1)) found.push(r.gear.last);
     if (t > 2 && t < 26.5 && !truth.some(s => t >= s.t && t < s.t + 0.4)) { n++; if (r.gear.gear === gearAt(stage, t)) right++; }
-  }
+  });
   const matched = truth.filter(s => found.some(e => e.dir === (s.to > s.from ? 'up' : 'down') && Math.abs(e.at - s.t) < 0.1));
   assert.equal(matched.length, truth.length, 'every shift found');
   assert.ok(found.length <= truth.length + 1, `${found.length} shifts reported for ${truth.length}`);

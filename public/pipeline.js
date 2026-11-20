@@ -20,14 +20,17 @@
 // the car from its tone. In auto cylinder mode, a recognised car's cylinder count is used as soon
 // as it is known, ahead of the count from the cycle tones (which carries on only until then).
 //
-// Gear: detectors/shifts.js finds gear shifts in pitch-detection's tracked rpm (the faster of the two
-// detectors) and counts the gear from them (`maxGear` gears; unknown until the car has been standing).
+// One RPM: fusion.js combines the two detectors into `fused` (the higher octave when they are an
+// octave apart, pitch-detection's timing).
+// Gear: detectors/shifts.js finds gear shifts in the fused rpm and counts the gear from them
+// (`maxGear` gears; unknown until the car has been standing).
 import rfft from 'fourier-transform';
 import { analyseSpectrum } from './detectors/gyroball-core.js';
 import { detectPitch } from './detectors/pd-core.js';
 import { detectCylinders } from './detectors/cylinders.js';
 import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.js';
 import { ShiftDetector } from './detectors/shifts.js';
+import { Fusion } from './fusion.js';
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -51,7 +54,9 @@ const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 export const DEFAULTS = Object.freeze({
   cylinders: 4, car: 'off', maxGear: 6, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
-  gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto' },
+  // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
+  // the same lag and error as every 20 ms (measured), for four times the work
+  gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto', every: 0.02 },
   pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012 },
   // confirm: a rejected new level is accepted after it persists confirmBaseMs + confirmWin × ½ window
   // (measured: the fastest rule gives the least error and the fewest glitches, once the detector
@@ -84,6 +89,7 @@ export class Pipeline {
     this.carEval = -Infinity;
     this.trackers = { gyro: new Tracker(), pd: new Tracker() };
     this.shifts = new ShiftDetector();
+    this.fusion = new Fusion();
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -105,7 +111,11 @@ export class Pipeline {
   }
 
   /** The rpm scale changed: restart the trackers, and don't take the jump for a gear shift. */
-  reset() { this.trackers.gyro.reset(); this.trackers.pd.reset(); this.shifts.clear(); }
+  reset() {
+    this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.shifts.clear();
+    this.gyroLast = null;
+    this.scale = (this.scale || 0) + 1; // readings taken before and after are not comparable
+  }
 
   /** Car profiles ({ sigma2, cars }, from tools/cars.js), or null for none. */
   setCars(profiles) {
@@ -301,10 +311,15 @@ export class Pipeline {
 
   /** @param {number} tEnd time (s) of the newest sample pushed */
   step(tEnd) {
+    const scale = this.scale;
     this.stepCar(tEnd);
     const gyro = this.cfg.gyro.enabled ? this.stepGyro(tEnd) : null;
     const pd = this.cfg.pd.enabled ? this.stepPd(tEnd) : null;
-    return { gyro, pd, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
+    // if the rpm scale changed during this step (a cylinder count was just found), the two
+    // readings are on different scales: nothing to combine this time
+    const fused = this.scale === scale ? this.fusion.step(tEnd, pd, gyro) : { rpm: null, source: '', coast: false };
+    this.shifts.push(tEnd, fused.coast ? null : fused.rpm);
+    return { gyro, pd, fused, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
   }
 
   buf(key, n, Type = Float32Array) {
@@ -336,6 +351,19 @@ export class Pipeline {
   }
 
   stepGyro(tEnd) {
+    // between analyses: the last result, carried forward by the tracker's rate of change
+    const prev = this.gyroLast;
+    if (prev && tEnd - prev.t < this.cfg.gyro.every - 1e-6 && tEnd > prev.t) {
+      const r = prev.res, tr = this.trackers.gyro;
+      const rpm = r.rpm !== null && this.cfg.predict && !r.coast ? Math.max(0, r.rpm + tr.v * (tEnd - prev.t)) : r.rpm;
+      return { ...r, rpm, computeMs: 0, ex: null };
+    }
+    const res = this.analyseGyro(tEnd);
+    this.gyroLast = { t: tEnd, res };
+    return res;
+  }
+
+  analyseGyro(tEnd) {
     const t0 = performance.now();
     const g = this.cfg.gyro, N = g.fft, fs = this.fs;
     const frame = this.raw.latest(N, this.buf('gf', N));
@@ -378,7 +406,6 @@ export class Pipeline {
     const res = this.finish('pd', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `clarity ${r.clarity.toFixed(2)}` : '', winMs: (N / fs) * 1000,
     });
-    this.shifts.push(tEnd, res.rpm != null && !res.coast ? res.rpm : null);
     if (this.cfg.cylinders === 'auto' && tr.x !== null && !res.coast) {
       this.noteRevs(tEnd - N / fs / 2, firingHz(tr.x / this.cfg.scale.pd, this.cylinders()));
     }

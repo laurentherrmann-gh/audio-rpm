@@ -23,7 +23,7 @@ for (const id of SETTING_IDS) {
 }
 $('hear').checked = store.get('hear', false);
 $('loopback').checked = store.get('loopback', false);
-const feedStored = store.get('feed', 'pd');
+const feedStored = store.get('feed', 'fused');
 document.querySelectorAll('input[name=feed]').forEach(r => { r.checked = r.value === feedStored; });
 let scales = store.get('scales', { gyro: 1, pd: 1 });
 
@@ -69,8 +69,8 @@ let history = [];        // chart points
 let last = null;         // latest worker result
 let lastShift = null;    // latest gear shift, with the wall time it arrived (for the tach's arrow)
 const lat = { gyro: [], pd: [] };          // per-result latency samples
-const lagPts = { gyro: [], pd: [] };       // {t: audio time at delivery, y}
-const measured = { gyro: null, pd: null };
+const lagPts = { gyro: [], pd: [], fused: [] };       // {t: audio time at delivery, y}
+const measured = { gyro: null, pd: null, fused: null };
 
 function setMsg(s, isError = false) { $('msg').textContent = s || ''; $('msg').classList.toggle('error', Boolean(s) && isError); }
 window.addEventListener('error', e => setMsg('Error: ' + e.message, true));
@@ -257,8 +257,8 @@ async function start() {
     worklet.port.postMessage({ port: ch.port1 }, [ch.port1]);
     worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), cars: carProfiles, port: ch.port2 }, [ch.port2]);
 
-    history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = [];
-    measured.gyro = measured.pd = null;
+    history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = []; lagPts.fused = [];
+    measured.gyro = measured.pd = measured.fused = null;
     resultsThisSecond = 0; peakLevel = -120; silentSince = 0;
     running = true;
     $('start').textContent = 'Stop';
@@ -330,7 +330,7 @@ function saveRecording(m) {
   const settings = { ...S, scales, truthCylinders: recTruth, car: c ? { n: c.n, car: c.car, cylinders: c.cylinders } : null };
   const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}${c ? ` · car #${c.n} ${c.car}` : ''}\n` +
     `# settings: ${JSON.stringify(settings)}\n` +
-    't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db,gear,shift,shift_ratio\n' + m.rows.join('\n') + '\n';
+    't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db,gear,shift,shift_ratio,rpm\n' + m.rows.join('\n') + '\n';
   download(wavBlob(m.samples, m.fs), base + '.wav');
   download(new Blob([csv], { type: 'text/csv' }), base + '.csv');
   setMsg(`Saved ${base}.wav (what the detectors heard) and ${base}.csv (their readings) to your Downloads.`);
@@ -358,6 +358,10 @@ function onResult(e) {
       lagPts[k].push({ t: tNow, y: r.rpm });
       while (lagPts[k].length && lagPts[k][0].t < tNow - LAG_S) lagPts[k].shift();
     }
+  }
+  if (sim && m.fused) {
+    lagPts.fused.push({ t: tNow, y: m.fused.rpm });
+    while (lagPts.fused.length && lagPts.fused[0].t < tNow - LAG_S) lagPts.fused.shift();
   }
   const truth = sim ? sim.truthAt(tNow) : null;
   history.push({ t: wall, truth, g: m.gyro?.rpm ?? null, gRaw: m.gyro?.raw ?? null, p: m.pd?.rpm ?? null, pRaw: m.pd?.raw ?? null });
@@ -388,7 +392,7 @@ setInterval(() => {
 // measured end-to-end lag, once a second (off the audio path)
 setInterval(() => {
   if (!sim) return;
-  for (const k of ['gyro', 'pd']) {
+  for (const k of ['gyro', 'pd', 'fused']) {
     const pts = lagPts[k];
     const stride = Math.max(1, Math.floor(pts.length / 500));
     const r = estimateLag(pts.filter((_, i) => i % stride === 0), t => sim.truthAt(t));
@@ -434,8 +438,8 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 function drawTach() {
   const { g, w, h } = setupCanvas($('tach'));
-  const k = feed(), other = k === 'gyro' ? 'pd' : 'gyro';
-  const color = { gyro: css('--gyro'), pd: css('--pd') };
+  const k = feed(), other = k === 'gyro' ? 'pd' : 'gyro'; // combined: the thin needle is gyroball
+  const color = { gyro: css('--gyro'), pd: css('--pd'), fused: css('--accent') };
   const rpm = last?.[k]?.rpm ?? null, rpmOther = last?.[other]?.rpm ?? null;
   const max = Math.ceil((S.redline * 1.1) / 1000) * 1000;
 
@@ -485,7 +489,7 @@ function drawTach() {
   g.font = `700 ${Math.round(R * 0.3)}px system-ui`;
   g.fillText(rpm === null ? '—' : Math.round(rpm).toLocaleString(), cx, cy + R * 0.62);
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
-  g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
+  g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : k === 'pd' ? 'pitch-detection' : 'combined'), cx, cy + R * 0.62 + 18);
   g.fillText('× 1000', cx, cy - R * 0.38);
   // gear, counted from the shifts ("?" until the car has been standing); an arrow marks a shift
   if (running && last?.gear) {
@@ -642,6 +646,10 @@ function drawCards() {
       : r.valid ? `${r.f0.toFixed(0)} Hz · window ${Math.round(r.winMs)} ms` : 'no clear signal';
   };
   show('gyro', last.gyro); show('pd', last.pd);
+  const fu = last.fused, fe = $('fused-rpm');
+  fe.textContent = fu?.rpm != null ? Math.round(fu.rpm).toLocaleString() : '—';
+  fe.classList.toggle('off', fu?.rpm == null);
+  $('fused-sub').textContent = !fu ? '' : fu.rpm == null ? 'no reading' : fu.coast ? 'holding' : `from ${fu.source}`;
   $('cyl-state').textContent = cylText().long;
   $('rec').textContent = recSince ? `■ Stop ${Math.floor((performance.now() - recSince) / 1000)} s` : '● Rec';
   $('rec').style.color = recSince ? 'var(--bad)' : '';
@@ -657,6 +665,7 @@ function drawCards() {
   }
   $('card-gyro').classList.toggle('selected', feed() === 'gyro');
   $('card-pd').classList.toggle('selected', feed() === 'pd');
+  $('card-fused').classList.toggle('selected', feed() === 'fused');
   $('truth').textContent = last.truth ? `true rpm ${Math.round(last.truth).toLocaleString()}` : '';
   const now = performance.now();
   if (now - lastStats > 250) {

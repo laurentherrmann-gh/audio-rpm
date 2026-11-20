@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { replay } from '../tools/lib/audio.js';
 import assert from 'node:assert/strict';
 import rfft from 'fourier-transform';
 import { detectCylinders } from '../public/detectors/cylinders.js';
@@ -45,18 +46,13 @@ test('detector: a pitch locked an octave high still gives the right rpm', () => 
 
 // --- auto mode in the pipeline ---
 function runAuto(schedule, seconds, cylinders, cycleLevel = 0.06, autoCandidates = CYLINDERS) {
-  const fs = 48000, D = 4, hop = 256;
+  const fs = 48000;
   const signal = synthesize(schedule, { fs, seconds, cylinders, cycleLevel });
-  const pipe = new Pipeline(fs, D, { cylinders: 'auto', autoCandidates, idle: 900, redline: 7500 });
   let r = null, lockedAt = null;
-  for (let end = hop; end <= signal.length; end += hop) {
-    const raw = signal.subarray(end - hop, end);
-    const dec = new Float32Array(hop / D);
-    for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
-    pipe.push(raw, dec);
-    r = pipe.step(end / fs);
-    if (lockedAt === null && r.cyl.locked !== null) lockedAt = end / fs;
-  }
+  replay(signal, fs, { cylinders: 'auto', autoCandidates, idle: 900, redline: 7500 }, (t, res) => {
+    r = res;
+    if (lockedAt === null && r.cyl.locked !== null) lockedAt = t;
+  });
   return { r, lockedAt };
 }
 

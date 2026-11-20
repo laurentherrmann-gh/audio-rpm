@@ -21,7 +21,7 @@ const cfg = {
 };
 const every = Number(opt('every', 0.5));
 console.log(`${file}: ${(samples.length / fs).toFixed(1)} s at ${fs} Hz · cylinders ${cylArg} · idle ${cfg.idle} · redline ${cfg.redline}\n`);
-console.log('    t |  pitch rpm (Hz)       | gyroball rpm (Hz)     | cylinders            | last count scores (share of cycle tones found)');
+console.log('    t | combined |  pitch rpm (Hz)       | gyroball rpm (Hz)     | cylinders            | last count scores (share of cycle tones found)');
 let next = every, lockedAt = null;
 const shifts = [];
 const pipe = replay(samples, fs, cfg, (t, r, p) => {
@@ -32,7 +32,7 @@ const pipe = replay(samples, fs, cfg, (t, r, p) => {
   const v = x => (x?.rpm == null ? '—'.padStart(5) : String(Math.round(x.rpm)).padStart(5)) + ` (${x?.valid ? x.f0.toFixed(1) : '—'})`.padEnd(10);
   const c = r.cyl.mode === 'manual' ? `${cylName(r.cyl.n)} manual` : r.cyl.locked !== null ? `${cylName(r.cyl.locked)} ${Math.round(r.cyl.confidence * 100)}%` : `auto… using ${r.cyl.n}`;
   const sc = p.cyl.last?.scores ? Object.entries(p.cyl.last.scores).map(([n, s]) => `${n}:${Math.round(s.present * 100)}%`).join(' ') : '';
-  console.log(`${t.toFixed(2).padStart(5)} | ${v(r.pd)}      | ${v(r.gyro)}      | ${c.padEnd(20)} | ${sc}`);
+  console.log(`${t.toFixed(2).padStart(5)} | ${(r.fused.rpm == null ? '—' : String(Math.round(r.fused.rpm))).padStart(8)} | ${v(r.pd)}      | ${v(r.gyro)}      | ${c.padEnd(20)} | ${sc}`);
 });
 console.log(`\ngear shifts: ${shifts.length}${shifts.length ? '' : ' (none found)'}`);
 for (const s of shifts) console.log(`  ${s.at.toFixed(2).padStart(6)} s  ${s.dir === 'up' ? '▲ up  ' : '▼ down'}  rpm ×${s.ratio.toFixed(2)}${s.gear ? `  → gear ${s.gear}` : ''}`);

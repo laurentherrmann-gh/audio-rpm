@@ -215,23 +215,30 @@ shifting sweep, adding one optimization at a time. 4 cylinders, 900–7,500 rpm:
 
 | | lag | error mean / p90 (rpm) | glitches | process time |
 |---|---|---|---|---|
-| POC 1 settings: 20 ms timer, reading stamped when computed | 56 ms | 179 / 269 | 3.7% | 0.41 ms |
-| + run on every 5.3 ms audio chunk | 56 ms | 178 / 255 | 3.5% | 0.40 ms |
-| + stamp at window centre, predict forward | 14 ms | 145 / 218 | 3.5% | 0.40 ms |
-| + tracker τ 0.05 s | 14 ms | 130 / 135 | 3.5% | 0.36 ms |
-| + adaptive pitch window (**default**) | −2 ms | **54 / 63** | **0.9%** | **0.34 ms** |
+| POC 1 settings: 20 ms timer, reading stamped when computed | 56 ms | 179 / 256 | 3.7% | 0.34 ms |
+| + run on every 5.3 ms audio chunk | 56 ms | 176 / 250 | 3.4% | 0.32 ms |
+| + stamp at window centre, predict forward | 14 ms | 142 / 220 | 3.4% | 0.33 ms |
+| + tracker τ 0.05 s | 14 ms | 127 / 130 | 3.4% | 0.35 ms |
+| + adaptive pitch window (**default**) | −2 ms | **52 / 58** | **0.8%** | **0.28 ms** |
 
 **gyroball (engine-tuned, FFT 8192)**
 
-| | lag | error mean / p90 (rpm) | glitches | process time |
+| | lag | error mean / p90 (rpm) | glitches | process time per chunk |
 |---|---|---|---|---|
-| POC 1 settings | 86 ms | 264 / 342 | 4.2% | 0.65 ms |
-| all optimizations (**default**) | 0 ms | 181 / 277 | 3.9% | 0.67 ms |
+| POC 1 settings | 86 ms | 264 / 342 | 4.2% | 0.70 ms |
+| all optimizations, analysed every 20 ms (**default**) | 0 ms | 191 / 316 | 4.2% | 0.17 ms |
+
+**combined** (both detectors, see [One RPM from two detectors](#one-rpm-from-two-detectors))
+
+| | lag | error mean / p90 (rpm) | glitches | process time per chunk |
+|---|---|---|---|---|
+| default | −2 ms | 48 / 59 | 0.8% | 0.49 ms |
 
 *lag* is measured, not computed: the delay that best aligns the output with the true RPM, using only
 moments when the revs are ramping. *Error* is at the same instant, lag included, which is what the
 tach and SimHub show. *Glitches* = share of time more than 1,500 rpm off. "POC 1 settings" already
-include today's tracker fixes. In the browser the page adds ~3 ms chunk wait and a few ms transport,
+include today's tracker fixes. The benchmark audio goes through the same low-pass and decimation as in
+the page. In the browser the page adds ~3 ms chunk wait and a few ms transport,
 measured live in the latency panel: about 10 ms end to end on the simulated engine.
 
 What each step does:
@@ -256,6 +263,9 @@ What each step does:
 - **Tracker fixes for shifts.** While readings are rejected or missing, velocity bleeds off instead
   of extrapolating (POC 1 could overshoot past redline during a shift). A new level is accepted once
   it persists for 15 ms.
+- **Gyroball every 20 ms, not every chunk.** Its window is 171 ms, so analysing it every 5.3 ms brought
+  nothing: same lag, error within noise (181 → 191 rpm), a quarter of the work. Between analyses its
+  value is carried forward by the tracker's rate of change.
 - **Gyroball rejects smeared readings.** Its 170 ms window straddles each shift for about 100 ms; the
   smeared spectrum fit upper harmonics of a low frequency with no fundamental, which read as
   idle-like dips. The engine-tuned variant now requires the fundamental to be present. The window
@@ -295,17 +305,17 @@ a 4- or 5-cylinder, a V12 at 7,000 can't be a 4, 5 or 6. Before a lock, the coun
 smallest one still possible.
 
 `npm run bench -- --auto`, simulated engines (time to lock, share of time locked to a wrong count,
-pitch-detection error once locked):
+error of the combined rpm once locked):
 
 | engine | mode | idle, then four pulls | rally: never idle |
 |---|---|---|---|
-| 4 cylinders | rally | 4 after 1.7 s · 0% · 55 rpm | 4 after 0.8 s · 0% · 43 rpm |
-| 5 cylinders | rally | 5 after 1.5 s · 0% · 37 rpm | 5 after 0.7 s · 0% · 38 rpm |
-| 6 cylinders | rally | 6 after 2.9 s · 0% · 43 rpm | 6 after 0.7 s · 0% · 40 rpm |
-| V8 | rally | 8 after 1.1 s · 0% · 46 rpm | 8 after 0.7 s · 0% · 34 rpm |
-| V10 | any | 10 after 1.2 s · 0% · 30 rpm | 10 after 0.7 s · 0% · 33 rpm |
-| V12 | any | 12 after 1.1 s · 0% · 28 rpm | 12 after 1.4 s · 0% · 35 rpm |
-| **V12** | **rally** | **no count** · wrong 12% of the time | **no count** · wrong 19% of the time |
+| 4 cylinders | rally | 4 after 1.7 s · 0% · 49 rpm | 4 after 0.8 s · 0% · 37 rpm |
+| 5 cylinders | rally | 5 after 1.5 s · 0% · 34 rpm | 5 after 0.7 s · 0% · 32 rpm |
+| 6 cylinders | rally | 6 after 1.4 s · 0% · 49 rpm | 6 after 0.7 s · 0% · 34 rpm |
+| V8 | rally | 8 after 1.1 s · 0% · 49 rpm | 8 after 0.7 s · 0% · 29 rpm |
+| V10 | any | 10 after 1.2 s · 0% · 26 rpm | 10 after 0.7 s · 0% · 28 rpm |
+| V12 | any | 12 after 1.1 s · 0% · 24 rpm | 12 after 1.2 s · 0% · 29 rpm |
+| **V12** | **rally** | **no count** · wrong 13% of the time | **no count** · wrong 20% of the time |
 
 The last row is the price of the rally set: a V12 isn't in it, so its rpm can't come out right
 (~2,000 rpm error). Gating keeps it from settling on a wrong count (before gating it stayed locked as a
@@ -313,15 +323,51 @@ The last row is the price of the rally set: a V12 isn't in it, so its rpm can't 
 DiRT Rally 2.0 car.
 
 What this can't know: it relies on the faint per-cylinder tones. A perfectly regular engine (the
-simulator with them switched off) is never given a count, rather than a wrong one. Real game audio
-has not been measured yet; a car whose loudest tone isn't the firing tone (some boxers and cross-plane
-V8s) may need the count picked by hand or **Calibrate**.
+simulator with them switched off) is never given a count, rather than a wrong one. On the one clean
+clip of real game audio so far (the DS 21, a 4-cylinder), it locked on 4 within the first second of
+driving. A car whose loudest tone isn't the firing tone (some boxers and cross-plane V8s) may need
+the count picked by hand or **Calibrate**.
+
+## One RPM from two detectors
+
+The first clean clip of real DiRT Rally 2.0 sound (24 s of the DS 21: idle, two revs to the limiter in
+neutral, then driving through three shifts) showed how the detectors fail on game audio, which the
+simulator had not: never at random, but by reading **a half or a quarter of the true revs**. On the
+rev limiter and when revving in neutral, the engine's slower rhythms (the crank and cycle tones) get as
+loud as the firing tone, and a period detector then finds the longer period. The slip is always
+downward, and gyroball slips less often than pitch-detection.
+
+`public/fusion.js` combines them into the **combined** rpm, the default for the tach, SimHub and
+shift detection:
+
+- when they agree, or disagree by anything but an octave: pitch-detection (the faster one; gyroball
+  is still catching up at a gear shift);
+- when a reading sits exactly an octave or two below where the revs just were, it is raised, for as
+  long as gyroball still reads the higher octave, or else for up to 2.5 s while the corrected revs don't
+  fall (a stay on the limiter). A real shift that halves the revs exactly would be shown 2.5 s late;
+  gearboxes rarely have one;
+- an octave relation must last 80 ms before it is acted on (falling revs cross "half of the other
+  reading" for an instant; a slip stays there).
+
+Share of the time each rpm is right (within 6%) on that clip, against a reference traced on its
+spectrogram:
+
+| | right | half | quarter | other / none |
+|---|---|---|---|---|
+| pitch-detection | 55% | 15% | 20% | 10% |
+| gyroball | 70% | 19% | 1% | 11% |
+| **combined** | **90%** | 4% | 0% | 7% |
+
+With the combined rpm, the two clean upshifts in the clip are found (×0.72 and ×0.73), with no false
+shift; with pitch-detection alone one was missed and two were misread. What is left wrong is mostly
+revving in neutral on the limiter, where the readings also hop to three quarters of the revs, a ratio a
+real shift can have. One car and 24 seconds: these rules will be re-measured on the full set.
 
 ## Gear shifts and gear
 
 In gear, the revs follow the car's speed and change gradually. A shift is a step: the revs drop
 (upshift) or jump (downshift) by a gearbox ratio in a fraction of a second, then change gradually
-again. `public/detectors/shifts.js` reports a shift when pitch-detection's rpm makes a fast, short
+again. `public/detectors/shifts.js` reports a shift when the combined rpm makes a fast, short
 change of 10% to ×1.93 that starts from calm revs and then stops. A lift, a launch and a stop are
 fast too, but last longer or change the revs more; a change of exactly ×2 or ÷2 is the pitch detector
 slipping an octave, not a shift.
@@ -338,10 +384,10 @@ Measured on the simulated stage only (`npm run bench -- --shifts`; 3 laps, shift
 
 | engine | shifts found | false | delay, median / max | ratio error (median) | gear right |
 |---|---|---|---|---|---|
-| 4 cyl | 36 of 36 | 1 | 248 / 293 ms | 1.7% | 98.9% |
-| 5 cyl | 36 of 36 | 1 | 243 / 289 ms | 1.6% | 100% |
-| 6 cyl | 36 of 36 | 0 | 243 / 276 ms | 1.8% | 100% |
-| 8 cyl | 36 of 36 | 0 | 245 / 283 ms | 1.8% | 100% |
+| 4 cyl | 36 of 36 | 1 | 247 / 277 ms | 1.7% | 100% |
+| 5 cyl | 36 of 36 | 1 | 243 / 263 ms | 1.7% | 100% |
+| 6 cyl | 36 of 36 | 0 | 243 / 271 ms | 1.8% | 100% |
+| 8 cyl | 36 of 36 | 0 | 240 / 263 ms | 1.8% | 100% |
 
 The delay runs from the start of the shift to its report: the shift itself (0.1 s), then the check
 that the revs have stopped moving. "Gear right" leaves out the 0.4 s around each shift. Not measured
@@ -431,7 +477,7 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, car list, car recognition, shifts and gear, recording checks, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
+npm test          # packet layout, car list, car recognition, combined rpm, shifts and gear, recording checks, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 npm run bench -- --shifts # gear shifts and gear on the simulated stage
@@ -451,6 +497,7 @@ public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js
                              car-id.js (car recognition from the tone: snapshots, profiles, matcher),
                              shifts.js (gear shifts from the rpm's steps, counted gear)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
+public/fusion.js             one rpm from the two detectors (octave slips corrected)
 public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
 public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, bench)

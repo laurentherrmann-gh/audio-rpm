@@ -17,8 +17,10 @@
 - Car recognition is `public/detectors/car-id.js` (thresholds in `CAR_ID`), learned and measured by
   `tools/cars.js` (`npm run learn-cars`, `npm run eval-cars`). Its thresholds were set on simulated
   cars only; retune them on the user's `samples/dr2/results-cars.md` when it exists.
+- `public/fusion.js` makes the combined rpm (tach, SimHub and shift detection use it). Its rules come
+  from one real clip (DS 21); re-measure on real clips before changing them, not on the simulator.
 - Shift and gear detection is `public/detectors/shifts.js` (thresholds in `SHIFT`), fed by
-  pitch-detection's tracked rpm in the pipeline; `npm run bench -- --shifts` measures it. Also tuned
+  the combined rpm in the pipeline; `npm run bench -- --shifts` measures it. Also tuned
   on the simulator only.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.
