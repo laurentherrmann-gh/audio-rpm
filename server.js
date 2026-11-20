@@ -1,4 +1,4 @@
-// audio-bridge server:
+// audio-rpm server:
 //  - serves the browser UI (public/) and the two npm packages the UI imports (/vendor/...)
 //  - receives the selected RPM from the page over WebSocket (/ws)
 //  - sends it to SimHub as DiRT Rally 2.0 UDP telemetry at SEND_HZ, when UDP output is on
@@ -91,7 +91,7 @@ setInterval(() => {
 }, 1000);
 
 server.listen(HTTP_PORT, () => {
-  console.log(`audio-bridge UI:        http://localhost:${HTTP_PORT}`);
+  console.log(`audio-rpm UI:           http://localhost:${HTTP_PORT}`);
   console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, ${SEND_HZ} Hz)`);
   console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);
 });

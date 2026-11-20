@@ -1,4 +1,4 @@
-# audio-bridge — POC 1
+# audio-rpm — POC 1
 
 Estimate engine RPM from game audio, for games that send no telemetry (DiRT Rally 2.0 on PS5).
 POC 1 listens to whatever your Mac is playing. It runs two detectors side by side so you can compare
