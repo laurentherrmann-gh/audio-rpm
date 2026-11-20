@@ -3,10 +3,11 @@
 //   npm run eval-dr2                          rally auto mode (4/5/6/8), all cars found
 //   npm run eval-dr2 -- --cylinders auto-any
 //   npm run eval-dr2 -- --only 11,20,53 --idle 800 --redline 9000
+//   npm run eval-dr2 -- --file ~/Downloads/audio-rpm-….wav --car 20     one recording of car #20
 // Writes samples/dr2/results.json (everything) and samples/dr2/results.md (summary to share).
 // There is no rpm truth in these recordings: "agree" (pitch-detection and gyroball within 5% of each
 // other) is the consistency check that stands in for it.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CYLINDERS, RALLY_CYLINDERS } from '../public/engine-model.js';
@@ -28,8 +29,9 @@ const cfg = {
 const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 
 const results = [];
-const todo = manifest.cars.map((car, i) => ({ car, i, file: path.join(dir, fileFor(car, i)) }))
-  .filter(x => (!only || only.has(x.i + 1)) && existsSync(x.file));
+const todo = opt('file')
+  ? [{ car: manifest.cars[Number(opt('car')) - 1] ?? { car: path.basename(opt('file')), cylinders: null, layout: '?' }, i: Number(opt('car', 0)) - 1, file: path.resolve(opt('file')) }]
+  : manifest.cars.map((car, i) => ({ car, i, file: path.join(dir, fileFor(car, i)) })).filter(x => (!only || only.has(x.i + 1)) && existsSync(x.file));
 if (!todo.length) { console.error(`No car files in ${path.relative(ROOT, dir)}/. Run npm run fetch-dr2 first.`); process.exit(1); }
 console.log(`Evaluating ${todo.length} car(s), cylinders ${cylArg}, idle ${cfg.idle}, redline ${cfg.redline}\n`);
 
@@ -80,6 +82,7 @@ const lines = [
   '| # | car | layout | truth | final | first lock | time right / wrong | pitch / gyro readings | agree |', '|---|---|---|---|---|---|---|---|---|',
   ...results.map(r => `| ${r.n} | ${r.car} | ${r.layout} | ${r.truth ?? '?'} | ${r.final ?? '—'} ${r.correct === null ? '' : r.correct ? '✓' : '✗'} | ${r.firstLock ?? '—'} s | ${r.timeLockedRight}% / ${r.timeLockedWrong}% | ${r.pitchReadings}% / ${r.gyroReadings}% | ${r.agree}% |`),
 ];
+mkdirSync(dir, { recursive: true });
 writeFileSync(path.join(dir, 'results.md'), lines.join('\n') + '\n');
 writeFileSync(path.join(dir, 'results.json'), JSON.stringify({ cfg: { ...cfg, cylinders: cylArg }, results }, null, 1) + '\n');
 console.log('\n' + lines.slice(2, 4 + Object.keys(by).length + 2).join('\n'));

@@ -192,8 +192,12 @@ async function start() {
 
 function stop() {
   running = false;
-  recUntil = 0;
-  worker?.terminate(); worker = null;
+  const w = worker; worker = null;
+  if (w && recSince) { // save what was recorded so far, then let the worker go
+    w.addEventListener('message', e => { if (e.data.type === 'recording') w.terminate(); });
+    w.postMessage({ type: 'record-stop' });
+    setTimeout(() => w.terminate(), 3000);
+  } else w?.terminate();
   sim?.stop(); sim = null;
   stream?.getTracks().forEach(t => t.stop()); stream = null;
   for (const n of nodes) { try { n.disconnect(); } catch { /* already */ } }
@@ -205,13 +209,16 @@ function stop() {
   drawTach();
 }
 
-// ---------- recording: 15 s of the detectors' input + their readings ----------
-const REC_SECONDS = 15;
-let recUntil = 0;
-function startRecording() {
+// ---------- recording: the detectors' input + their readings, click to start, click to stop ----------
+const REC_MAX_SECONDS = 120; // a whole DR2 video chapter fits; longer belongs in a real recorder
+let recSince = 0; // performance.now() when recording started, 0 when not recording
+let recTruth = null; // the simulated engine's cylinder count, if the source was a simulator
+function toggleRecording() {
+  if (recSince) { worker?.postMessage({ type: 'record-stop' }); return; }
   if (!running || !worker) { setMsg('Press Start first: the recorder saves what the detectors are hearing.'); return; }
-  worker.postMessage({ type: 'record', seconds: REC_SECONDS });
-  recUntil = performance.now() + REC_SECONDS * 1000;
+  worker.postMessage({ type: 'record', seconds: REC_MAX_SECONDS });
+  recSince = performance.now();
+  recTruth = sim?.cylinders ?? null;
 }
 function download(blob, name) {
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
@@ -228,12 +235,12 @@ function wavBlob(samples, fs) { // 16-bit PCM mono
   return new Blob([buf], { type: 'audio/wav' });
 }
 function saveRecording(m) {
-  recUntil = 0;
+  recSince = 0;
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
   const label = $('source').selectedOptions[0]?.textContent || 'audio';
   const src = label.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
   const base = `audio-rpm-${src}-${stamp}`;
-  const settings = { ...S, scales, truthCylinders: sim?.cylinders ?? null };
+  const settings = { ...S, scales, truthCylinders: recTruth };
   const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}\n` +
     `# settings: ${JSON.stringify(settings)}\n` +
     't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db\n' + m.rows.join('\n') + '\n';
@@ -533,8 +540,8 @@ function drawCards() {
   };
   show('gyro', last.gyro); show('pd', last.pd);
   $('cyl-state').textContent = cylText().long;
-  $('rec').textContent = recUntil ? `● ${Math.max(0, Math.ceil((recUntil - performance.now()) / 1000))} s` : '● Rec 15 s';
-  $('rec').style.color = recUntil ? 'var(--bad)' : '';
+  $('rec').textContent = recSince ? `■ Stop ${Math.floor((performance.now() - recSince) / 1000)} s` : '● Rec';
+  $('rec').style.color = recSince ? 'var(--bad)' : '';
   if (simRandom && !simRandom.revealed) {
     const locked = last.cyl?.locked, waited = (performance.now() - simRandom.started) / 1000;
     if (locked != null || waited > 20) {
@@ -570,7 +577,7 @@ function showScales() {
 // ---------- UI wiring ----------
 $('start').onclick = () => (running ? stop() : start());
 $('refresh').onclick = () => listInputs(true);
-$('rec').onclick = startRecording;
+$('rec').onclick = toggleRecording;
 $('source').onchange = () => { store.set('source', $('source').value); if (running) start(); };
 $('hear').onchange = () => { store.set('hear', $('hear').checked); if (monitor) monitor.gain.value = $('hear').checked ? 1 : 0; };
 $('loopback').onchange = () => { store.set('loopback', $('loopback').checked); if (running && !$('source').value.startsWith('sim:')) start(); };

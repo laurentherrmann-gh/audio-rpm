@@ -4,6 +4,9 @@
 //   npm run fetch-dr2                       download (if needed) + cut every car into samples/dr2/
 //   npm run fetch-dr2 -- --source my.m4a    cut from an audio file you already have, no download
 //   npm run fetch-dr2 -- --only 20,53       just those cars (numbers as in the manifest, from 1)
+//   npm run fetch-dr2 -- --source rec.m4a --offset auto
+//        cut from your own recording of the video's playback (e.g. QuickTime recording BlackHole):
+//        --offset auto finds where the sound starts (= the video's 0:00); or give seconds
 // YouTube's terms only allow downloading through YouTube's own features: using yt-dlp is your call.
 // The audio files stay local (samples/dr2/ is git-ignored).
 import { spawnSync } from 'node:child_process';
@@ -27,6 +30,15 @@ const run = (cmd, args) => {
 export const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 export const fileFor = (car, i) => `${String(i + 1).padStart(2, '0')}-${slug(car.car)}.wav`;
 
+/** Time (s) at which the sound starts: end of the leading silence, via ffmpeg silencedetect. */
+function soundStart(file) {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-t', '120', '-i', file, '-af', 'silencedetect=noise=-50dB:d=0.3', '-f', 'null', '-'], { encoding: 'utf8' });
+  const log = r.stderr || '';
+  const first = log.match(/silence_start: ([\d.]+)/), end = log.match(/silence_end: ([\d.]+)/);
+  if (!first || Number(first[1]) > 0.05 || !end) return 0; // no leading silence
+  return Number(end[1]);
+}
+
 function main() {
   if (!has('ffmpeg', '-version')) { console.error('ffmpeg not found: brew install ffmpeg'); process.exit(1); }
   mkdirSync(OUT, { recursive: true });
@@ -43,12 +55,18 @@ function main() {
     } else console.log(`Using the audio already downloaded: ${path.relative(ROOT, source)}`);
   }
 
+  let offset = 0;
+  if (opt('offset') === 'auto') {
+    offset = soundStart(source);
+    console.log(`Sound starts at ${offset.toFixed(2)} s in ${path.basename(source)}: taken as the video's 0:00.`);
+  } else if (opt('offset')) offset = Number(opt('offset'));
+
   let made = 0, kept = 0;
   manifest.cars.forEach((car, i) => {
     if (only && !only.has(i + 1)) return;
     const out = path.join(OUT, fileFor(car, i));
     if (existsSync(out)) { kept++; return; }
-    run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(car.start), '-to', String(car.end), '-i', source,
+    run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(car.start + offset), '-to', String(car.end + offset), '-i', source,
       '-ac', '1', '-ar', '48000', '-c:a', 'pcm_s16le', '-y', out]);
     console.log(`  ${path.basename(out)}  (${car.end - car.start} s, ${car.cylinders ?? '?'} cyl, ${car.layout})`);
     made++;

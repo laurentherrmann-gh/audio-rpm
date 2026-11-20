@@ -6,7 +6,7 @@ import { Pipeline } from './pipeline.js';
 
 let pipe = null, audioPort = null;
 let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
-let rec = null; // { need, got, chunks: Float32Array[], rows: [] } while recording
+let rec = null; // { need, got, chunks: Float32Array[], rows: [] } while recording; stops at need or on 'record-stop'
 
 self.onmessage = e => {
   const m = e.data;
@@ -20,8 +20,18 @@ self.onmessage = e => {
     pipe.reset();
   } else if (m.type === 'record' && pipe) {
     rec = { need: Math.round(m.seconds * pipe.fs), got: 0, chunks: [], rows: [] };
+  } else if (m.type === 'record-stop' && rec) {
+    finishRecording();
   }
 };
+
+function finishRecording() {
+  const samples = new Float32Array(rec.got);
+  let o = 0;
+  for (const c of rec.chunks) { samples.set(c, o); o += c.length; }
+  self.postMessage({ type: 'recording', fs: pipe.fs, samples, rows: rec.rows }, [samples.buffer]);
+  rec = null;
+}
 
 function onChunk(e) {
   const m = e.data;
@@ -53,12 +63,6 @@ function run() {
     const f = v => (v == null ? '' : Math.round(v));
     rec.rows.push([lastT.toFixed(4), f(r.pd?.raw), f(r.pd?.rpm), r.pd?.f0 ? r.pd.f0.toFixed(2) : '', f(r.gyro?.raw), f(r.gyro?.rpm),
       r.gyro?.f0 ? r.gyro.f0.toFixed(2) : '', r.cyl.n, r.cyl.locked ?? '', levelDb.toFixed(1)].join(','));
-    if (rec.got >= rec.need) {
-      const samples = new Float32Array(rec.got);
-      let o = 0;
-      for (const c of rec.chunks) { samples.set(c, o); o += c.length; }
-      self.postMessage({ type: 'recording', fs: pipe.fs, samples, rows: rec.rows }, [samples.buffer]);
-      rec = null;
-    }
+    if (rec.got >= rec.need) finishRecording();
   }
 }

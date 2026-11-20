@@ -85,9 +85,10 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 
 ### Recording what the detectors hear
 
-**● Rec 15 s** (top bar, while running) saves two files to your Downloads: a WAV of exactly what the
-detectors received, and a CSV of their readings (pitch, gyroball, cylinder count, input level) at every
-update, with the settings in its header. Replay a recording offline through the same pipeline:
+**● Rec** (top bar, while running): click to start, click **■ Stop** to end (at most 2 minutes; pressing
+Stop on the app also ends and saves it). It saves two files to your Downloads: a WAV of exactly what
+the detectors received, and a CSV of their readings (pitch, gyroball, cylinder count, input level) at
+every update, with the settings in its header. Replay a recording offline through the same pipeline:
 
 ```sh
 npm run analyze -- ~/Downloads/audio-rpm-….wav                      # rally auto mode
@@ -110,9 +111,30 @@ npm run eval-dr2 -- --only 11,20,53                  # just some cars (manifest 
 npm run fetch-dr2 -- --source audio.m4a              # cut from an audio file you already have
 ```
 
-YouTube's terms only allow downloading through YouTube's own features, so using yt-dlp is your call;
-the alternative is to play the video through BlackHole and use **● Rec**. The audio stays on your Mac
-(`samples/dr2/` is git-ignored). `results.md` has, per car: final count (✓/✗), time to first lock,
+YouTube's terms only allow downloading through YouTube's own features, so using yt-dlp is your call
+(YouTube may also refuse it with HTTP 403). The alternative is to record the video's playback through
+BlackHole, then let the script cut it:
+
+```sh
+ffmpeg -f avfoundation -list_devices true -i ""                     # find BlackHole's name
+ffmpeg -f avfoundation -i ":BlackHole 2ch" -ac 1 -ar 48000 dr2.wav    # start, then play the video at 1×, q to stop
+npm run fetch-dr2 -- --source dr2.wav --offset auto                  # finds the video's 0:00, cuts per car
+npm run eval-dr2
+```
+
+`--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
+`--offset 2.5` in seconds). The video is 55 minutes; it must play at **1× without ads**, since ads or
+pauses shift every chapter after them. For one car only, use **● Rec** in the page over its chapter and
+`npm run eval-dr2 -- --file ~/Downloads/audio-rpm-….wav --car 20`.
+
+Don't record at 2× to save time. Players keep the pitch at 2× by cutting and splicing the sound, and
+the splices land on firing pulses, which scrambles the 4-stroke cycle that cylinder detection reads.
+Tested on the simulator (ffmpeg `atempo=2`, then `atempo=0.5` back to normal): rpm with the cylinder
+count set by hand stays good (median error 8–11 rpm vs 3–5), but auto-detection locks the wrong count
+81–95% of the time on every engine, against 0% at 1×. The set is there to test cylinder detection,
+so 2× would make it useless.
+
+The audio stays on your Mac (`samples/dr2/` is git-ignored). `results.md` has, per car: final count (✓/✗), time to first lock,
 share of time locked right / wrong, how often each detector had a reading, and how often
 pitch-detection and gyroball agree within 5% (there is no rpm truth in these recordings).
 
