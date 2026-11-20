@@ -3,7 +3,8 @@
 //   npm run eval-dr2                          rally auto mode (4/5/6/8), all cars found
 //   npm run eval-dr2 -- --cylinders auto-any
 //   npm run eval-dr2 -- --only 11,20,53 --idle 800 --redline 9000
-//   npm run eval-dr2 -- --file ~/Downloads/audio-rpm-….wav --car 20     one recording of car #20
+//   npm run eval-dr2 -- --file ~/Downloads/audio-rpm-car20-….wav        one recording made in the page with a car picked
+//   npm run eval-dr2 -- --file clip.wav --car 20                        any recording of car #20
 // Writes samples/dr2/results.json (everything) and samples/dr2/results.md (summary to share).
 // There is no rpm truth in these recordings: "agree" (pitch-detection and gyroball within 5% of each
 // other) is the consistency check that stands in for it.
@@ -12,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CYLINDERS, RALLY_CYLINDERS } from '../public/engine-model.js';
 import { readWav, replay, cylName } from './lib/audio.js';
-import { fileFor } from './fetch-dr2.js';
+import { fileFor, carNumberIn } from '../public/cars.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -30,8 +31,10 @@ const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 const SILENT_DB = -60; // a file whose loudest sample is below this has no sound in it
 
 const results = [];
+// --file: the car is --car n, or the carNN the page puts in a recording's name when a car is picked
+const fileCar = opt('file') ? Number(opt('car')) || carNumberIn(path.basename(opt('file'))) || 0 : 0;
 const todo = opt('file')
-  ? [{ car: manifest.cars[Number(opt('car')) - 1] ?? { car: path.basename(opt('file')), cylinders: null, layout: '?' }, i: Number(opt('car', 0)) - 1, file: path.resolve(opt('file')) }]
+  ? [{ car: manifest.cars[fileCar - 1] ?? { car: path.basename(opt('file')), cylinders: null, layout: '?' }, i: fileCar - 1, file: path.resolve(opt('file')) }]
   : manifest.cars.map((car, i) => ({ car, i, file: path.join(dir, fileFor(car, i)) })).filter(x => (!only || only.has(x.i + 1)) && existsSync(x.file));
 if (!todo.length) { console.error(`No car files in ${path.relative(ROOT, dir)}/. Run npm run fetch-dr2 first.`); process.exit(1); }
 console.log(`Evaluating ${todo.length} car(s), cylinders ${cylArg}, idle ${cfg.idle}, redline ${cfg.redline}\n`);

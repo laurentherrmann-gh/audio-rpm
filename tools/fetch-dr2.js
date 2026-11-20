@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { slug, fileFor } from '../public/cars.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -27,8 +28,7 @@ const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { stdio: ['ignore', 'inherit', 'inherit'] });
   if (r.status !== 0) throw new Error(`${cmd} failed (exit ${r.status})`);
 };
-export const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-export const fileFor = (car, i) => `${String(i + 1).padStart(2, '0')}-${slug(car.car)}.wav`;
+export { slug, fileFor };
 
 const SILENT_DB = -60; // a recording whose loudest moment is below this has no sound in it
 const SEARCH_S = 120;  // --offset auto looks for the start of the sound in the first 2 minutes

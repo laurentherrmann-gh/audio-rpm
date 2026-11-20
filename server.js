@@ -25,6 +25,7 @@ const MOUNTS = [
   ['/vendor/fourier-transform/', path.join(ROOT, 'node_modules/fourier-transform')],
   ['/', path.join(ROOT, 'public')],
 ];
+const CARS = path.join(ROOT, 'samples/dr2-cars.json');
 // Browsers can't resolve bare package names inside workers, so rewrite them when serving JS
 // (the same specifiers resolve from node_modules when the modules run in Node for tests).
 const BARE = /((?:from|import)\s*\(?\s*)(['"])(pitch-detection\/[^'"]+|fourier-transform)\2/g;
@@ -38,9 +39,13 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
-    const [prefix, dir] = MOUNTS.find(([p]) => pathname.startsWith(p));
-    const file = path.resolve(dir, '.' + pathname.slice(prefix.length - 1));
-    if (!file.startsWith(dir + path.sep)) { res.writeHead(403).end(); return; }
+    let file;
+    if (pathname === '/cars.json') file = CARS; // the car picker's list
+    else {
+      const [prefix, dir] = MOUNTS.find(([p]) => pathname.startsWith(p));
+      file = path.resolve(dir, '.' + pathname.slice(prefix.length - 1));
+      if (!file.startsWith(dir + path.sep)) { res.writeHead(403).end(); return; }
+    }
     let body = await readFile(file);
     if (file.endsWith('.js')) body = resolveBare(body.toString('utf8'));
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });

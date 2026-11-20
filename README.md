@@ -64,6 +64,11 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 
 ## The page
 
+- **Car** (top bar): the 82 DiRT Rally 2.0 cars. Picking one sets its cylinder count, which is certain
+  where auto-detection can be wrong (the two cars whose count isn't known stay on Auto). Idle and
+  redline are remembered per car: set them once under Settings with the car picked. The list doesn't
+  include each car's redline; the game's values aren't in it. Recordings made with a car picked are
+  named `audio-rpm-carNN-…`, and `eval-dr2 --file` reads the car from that name.
 - **Tachometer:** needle and readout for the detector picked with *on tach*; the other detector is the
   thin needle; the white mark on the rim is the true RPM (simulation). The 15 shift lights run from
   72% to 97% of redline, then flash.
@@ -124,10 +129,13 @@ npm run eval-dr2
 
 The Mac must play into BlackHole while ffmpeg records it: in System Settings > Sound > Output choose
 BlackHole 2ch, or a Multi-Output Device with BlackHole and your speakers to hear it too. fetch-dr2 stops
-on a silent recording, and eval-dr2 marks silent files. `--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
+on a silent recording, and eval-dr2 marks silent files.
+
+`--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
 `--offset 2.5` in seconds). The video is 55 minutes; it must play at **1× without ads**, since ads or
-pauses shift every chapter after them. For one car only, use **● Rec** in the page over its chapter and
-`npm run eval-dr2 -- --file ~/Downloads/audio-rpm-….wav --car 20`.
+pauses shift every chapter after them. For one car only, pick the car in the page, use **● Rec** over its chapter, and run
+`npm run eval-dr2 -- --file ~/Downloads/audio-rpm-car20-….wav` (or `--file clip.wav --car 20` for any
+other recording of car 20).
 
 Don't record at 2× to save time. Players keep the pitch at 2× by cutting and splicing the sound, and
 the splices land on firing pulses, which scrambles the 4-stroke cycle that cylinder detection reads.
@@ -234,7 +242,8 @@ What each step does:
 ## Cylinders: auto-detection
 
 The detected pitch alone can't give the RPM: a 4-cylinder at 6,000 rpm and a V8 at 3,000 rpm fire at
-the same rate. The cylinder selector in the top bar offers:
+the same rate. For a DiRT Rally 2.0 car, pick it in the **car** list and the count is known. Otherwise
+the cylinder selector in the top bar offers:
 
 - **Auto · rally (4/5/6/8)**, the default. Every DiRT Rally 2.0 car has 4, 5, 6 or 8 cylinders:
   mostly 4; the Audi quattro S1 E2 5; the Metro 6R4, Stratos, Porsche 911s, BMW M1/M2 and Datsun 240Z 6;
@@ -318,7 +327,7 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
+npm test          # packet layout, car list, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 ```
@@ -339,9 +348,10 @@ public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
 public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, bench)
 public/engine-sim.js         in-browser simulated engine
+public/cars.js               car keys and file names, shared by the car picker and the dataset tools
 tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV),
                              fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), lib/audio.js (WAV + replay)
-samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout
+samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 
 ## Next: POC 2

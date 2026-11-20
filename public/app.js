@@ -1,6 +1,7 @@
 import { EngineSim } from './engine-sim.js';
 import { firingHz, CYLINDERS, RALLY_CYLINDERS } from './engine-model.js';
 import { estimateLag } from './lag.js';
+import { slug, recordingName } from './cars.js';
 
 const $ = id => document.getElementById(id);
 const HIST_S = 20;       // chart window
@@ -49,6 +50,9 @@ function readSettings() {
   };
 }
 let S = readSettings();
+// Idle and redline are kept per car ('' = no car picked). First run: today's values are the no-car ones.
+const profiles = store.get('profiles', {});
+if (!profiles['']) profiles[''] = { idle: S.idle, redline: S.redline };
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
   cylinders: S.cylinders, autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
@@ -70,6 +74,44 @@ function setMsg(s, isError = false) { $('msg').textContent = s || ''; $('msg').c
 window.addEventListener('error', e => setMsg('Error: ' + e.message, true));
 window.addEventListener('unhandledrejection', e => setMsg('Error: ' + (e.reason?.message || e.reason), true));
 function sendConfig() { worker?.postMessage({ type: 'config', cfg: pipelineCfg() }); }
+
+// ---------- car picker: the car gives the cylinder count; idle and redline are remembered per car ----------
+let cars = []; // the manifest's cars, plus n (number from 1, as in the tools) and key
+const carNow = () => cars.find(c => c.key === $('car').value) ?? null;
+async function loadCars() {
+  try {
+    const m = await (await fetch('cars.json')).json();
+    cars = m.cars.map((c, i) => ({ ...c, n: i + 1, key: slug(c.car) }));
+  } catch { return; } // no list: the page works as before, without the picker's cars
+  for (const c of [...cars].sort((a, b) => a.car.localeCompare(b.car))) {
+    const o = document.createElement('option');
+    o.value = c.key; o.textContent = `${c.car} · ${c.cylinders ? cylName(c.cylinders) : 'cyl ?'}`;
+    $('car').appendChild(o);
+  }
+  $('car').value = store.get('car', '');
+  if (!carNow()) { $('car').value = ''; store.set('car', ''); }
+}
+function pickCar() {
+  const key = $('car').value, c = carNow(), own = profiles[key];
+  store.set('car', key);
+  const p = own ?? profiles[''];
+  $('idle').value = p.idle; $('redline').value = p.redline;
+  $('cylinders').value = c?.cylinders ? String(c.cylinders) : 'auto'; // no car, or count unknown: detect it
+  for (const id of ['idle', 'redline', 'cylinders']) store.set(id, val(id));
+  settingsChanged();
+  const revs = `idle ${p.idle} · redline ${p.redline} rpm`;
+  if (!c) setMsg(`No car: cylinders back to Auto, ${revs}.`);
+  else setMsg(`${c.car}: ${c.cylinders ? `${cylName(c.cylinders)} (${c.layout})` : `cylinder count not known for the game's model, so Auto detects it`}, ` +
+    (own ? `${revs} as you set them for this car.` : `${revs} (not set for this car yet: change them under Settings and they are remembered for it).`));
+}
+function settingsChanged() {
+  const prev = S; S = readSettings();
+  $('pd-algo-name').textContent = S.algo;
+  if (!running) { drawTach(); return; }
+  const simChanged = sim && (prev.simdrive !== S.simdrive || prev.idle !== S.idle || prev.redline !== S.redline);
+  if (simChanged || prev.hop !== S.hop) { start(); return; }
+  sendConfig();
+}
 
 // ---------- inputs ----------
 const SIM_OPTIONS = '<optgroup label="Simulated engine (known RPM)">' +
@@ -212,6 +254,7 @@ function stop() {
 // ---------- recording: the detectors' input + their readings, click to start, click to stop ----------
 const REC_MAX_SECONDS = 120; // a whole DR2 video chapter fits; longer belongs in a real recorder
 let recSince = 0; // performance.now() when recording started, 0 when not recording
+let recCar = null; // the car picked when recording started
 let recTruth = null; // the simulated engine's cylinder count, if the source was a simulator
 function toggleRecording() {
   if (recSince) { worker?.postMessage({ type: 'record-stop' }); return; }
@@ -219,6 +262,7 @@ function toggleRecording() {
   worker.postMessage({ type: 'record', seconds: REC_MAX_SECONDS });
   recSince = performance.now();
   recTruth = sim?.cylinders ?? null;
+  recCar = carNow();
 }
 function download(blob, name) {
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
@@ -239,9 +283,10 @@ function saveRecording(m) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
   const label = $('source').selectedOptions[0]?.textContent || 'audio';
   const src = label.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
-  const base = `audio-rpm-${src}-${stamp}`;
-  const settings = { ...S, scales, truthCylinders: recTruth };
-  const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}\n` +
+  const c = recCar;
+  const base = c ? recordingName(c.n, c.car, stamp) : `audio-rpm-${src}-${stamp}`;
+  const settings = { ...S, scales, truthCylinders: recTruth, car: c ? { n: c.n, car: c.car, cylinders: c.cylinders } : null };
+  const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}${c ? ` · car #${c.n} ${c.car}` : ''}\n` +
     `# settings: ${JSON.stringify(settings)}\n` +
     't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db\n' + m.rows.join('\n') + '\n';
   download(wavBlob(m.samples, m.fs), base + '.wav');
@@ -471,7 +516,7 @@ const cylName = n => (n >= 8 ? `V${n}` : `${n}-cyl`);
 const cylNow = () => last?.cyl?.n ?? (S.cylinders === 'auto' ? 4 : S.cylinders);
 function cylText() {
   const c = last?.cyl;
-  if (S.cylinders !== 'auto') return { short: cylName(S.cylinders), long: `${cylName(S.cylinders)} (manual)` };
+  if (S.cylinders !== 'auto') return { short: cylName(S.cylinders), long: `${cylName(S.cylinders)} (${carNow()?.cylinders === S.cylinders ? 'car' : 'manual'})` };
   if (!c || c.locked === null) {
     return { short: 'auto…', long: c?.candidate ? `detecting… (${cylName(c.candidate)}?)` : 'detecting… needs steady revs' };
   }
@@ -578,6 +623,7 @@ function showScales() {
 $('start').onclick = () => (running ? stop() : start());
 $('refresh').onclick = () => listInputs(true);
 $('rec').onclick = toggleRecording;
+$('car').onchange = pickCar;
 $('source').onchange = () => { store.set('source', $('source').value); if (running) start(); };
 $('hear').onchange = () => { store.set('hear', $('hear').checked); if (monitor) monitor.gain.value = $('hear').checked ? 1 : 0; };
 $('loopback').onchange = () => { store.set('loopback', $('loopback').checked); if (running && !$('source').value.startsWith('sim:')) start(); };
@@ -586,12 +632,11 @@ document.querySelectorAll('input[name=feed]').forEach(r => { r.onchange = () => 
 for (const id of SETTING_IDS) {
   $(id).addEventListener('change', () => {
     store.set(id, val(id));
-    const prev = S; S = readSettings();
-    $('pd-algo-name').textContent = S.algo;
-    if (!running) return;
-    const simChanged = sim && (prev.simdrive !== S.simdrive || prev.idle !== S.idle || prev.redline !== S.redline);
-    if (simChanged || prev.hop !== S.hop) { start(); return; }
-    sendConfig();
+    settingsChanged();
+    if (id === 'idle' || id === 'redline') { // typed by the user: remember them for this car
+      profiles[$('car').value] = { idle: S.idle, redline: S.redline };
+      store.set('profiles', profiles);
+    }
   });
 }
 for (const k of ['gyro', 'pd']) {
@@ -608,6 +653,7 @@ $('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales'
 $('pd-algo-name').textContent = S.algo;
 showScales();
 connect();
+loadCars();
 listInputs(false);
 drawTach();
 window.addEventListener('resize', () => { if (!running) drawTach(); });
