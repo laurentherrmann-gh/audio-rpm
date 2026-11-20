@@ -122,22 +122,40 @@ YouTube's terms only allow downloading through YouTube's own features, so using 
 (YouTube may also refuse it with HTTP 403). The alternative is to record the video's playback through
 BlackHole, then let the script cut it:
 
+1. In **QuickTime Player**: File > New Audio Recording, microphone **BlackHole 2ch** (the arrow next to
+   the record button), then record.
+2. Play the video at 1× from 0:00; stop the recording when it ends; File > Save.
+
 ```sh
-ffmpeg -f avfoundation -list_devices true -i ""                     # find BlackHole's name
-ffmpeg -f avfoundation -i ":BlackHole 2ch" -ac 1 -ar 48000 dr2.wav    # start, then play the video at 1×, q to stop
-npm run fetch-dr2 -- --source dr2.wav --offset auto                  # finds the video's 0:00, cuts per car
+npm run fetch-dr2 -- --source test.m4a --check         # after one minute: is this recording method sound?
+npm run fetch-dr2 -- --source dr2.m4a --offset auto    # checks the whole recording, finds the video's 0:00, cuts per car
 npm run eval-dr2
 ```
 
-The Mac must play into BlackHole while ffmpeg records it: in System Settings > Sound > Output choose
-BlackHole 2ch, or a Multi-Output Device with BlackHole and your speakers to hear it too. fetch-dr2 stops
-on a silent recording, and eval-dr2 marks silent files.
+The Mac must play into BlackHole while it records: in System Settings > Sound > Output choose
+BlackHole 2ch, or a Multi-Output Device with BlackHole and your speakers to hear it too.
 
-`--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
-`--offset 2.5` in seconds). The video is 55 minutes; it must play at **1× without ads**, since ads or
-pauses shift every chapter after them. For one car only, pick the car in the page, use **● Rec** over its chapter, and run
-`npm run eval-dr2 -- --file ~/Downloads/audio-rpm-car20-….wav` (or `--file clip.wav --car 20` for any
-other recording of car 20).
+**Don't capture with `ffmpeg -f avfoundation`.** It was tried here and lost about one block of sound in
+eight (512 samples at a time): the 54:40 video came out 48:15 long, with a join about every 80 ms. Each
+join is a click that breaks the engine's rhythm and colours its tone. ffmpeg is fine for converting.
+
+Before cutting anything, fetch-dr2 checks the recording:
+
+| check | what it catches | what it does |
+|---|---|---|
+| silence | the Mac was not playing into BlackHole | stops |
+| lost sound | joins that fall on one grid of 2^k samples: a recorder dropping buffers | stops (`--force` to cut anyway) |
+| clipping | flat tops at the recording's ceiling | warns |
+| level over full scale | not cut off (AAC keeps it): only loud | scales the clips down |
+| length | the recording ends before the video does | cuts only the cars that are in it |
+| cut points | the sound should change where the cars change (`tools/lib/align.js`) | reports how many car changes line up; moves the start past an ad that played first; cuts only the cars before an ad or a pause in the middle (`--all` to cut them all) |
+
+The cut-point check only acts when the first car changes clearly agree on a start; otherwise it says so
+and cuts from where the sound starts (`--offset auto`) or from the time given (`--offset 2.5`). It was
+tuned on synthetic recordings, not yet on the real video. Clips are always cut afresh, so files from an
+earlier recording never stay behind. For one car only, pick the car in the page, use **● Rec** over its
+chapter, and run `npm run eval-dr2 -- --file ~/Downloads/audio-rpm-car20-….wav` (or
+`--file clip.wav --car 20` for any other recording of car 20).
 
 Don't record at 2× to save time. Players keep the pitch at 2× by cutting and splicing the sound, and
 the splices land on firing pulses, which scrambles the 4-stroke cycle that cylinder detection reads.
@@ -411,7 +429,7 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, car list, car recognition, shifts and gear, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
+npm test          # packet layout, car list, car recognition, shifts and gear, recording checks, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 npm run bench -- --shifts # gear shifts and gear on the simulated stage
@@ -438,7 +456,8 @@ public/engine-sim.js         in-browser simulated engine
 public/cars.js               car keys and file names, shared by the car picker and the dataset tools
 tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV),
                              fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), cars (learn-cars / eval-cars:
-                             car profiles and how well cars are recognised), lib/audio.js (WAV + replay)
+                             car profiles and how well cars are recognised), lib/audio.js (WAV + replay),
+                             lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 
