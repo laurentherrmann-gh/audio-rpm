@@ -83,6 +83,18 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 - **Chart:** last 20 s, both detectors against the true RPM; dots are raw readings before tracking.
 - **Spectrum:** what gyroball sees, with each detector's pick marked.
 
+### Recording what the detectors hear
+
+**● Rec 15 s** (top bar, while running) saves two files to your Downloads: a WAV of exactly what the
+detectors received, and a CSV of their readings (pitch, gyroball, cylinder count, input level) at every
+update, with the settings in its header. Replay a recording offline through the same pipeline:
+
+```sh
+npm run analyze -- ~/Downloads/audio-rpm-….wav                      # rally auto mode
+npm run analyze -- clip.wav --cylinders auto-any --idle 1000 --redline 8500 --every 0.25
+ffmpeg -i clip.m4a -ac 1 -ar 48000 clip.wav                        # other formats: convert first
+```
+
 ### Measuring the real capture path (loopback test)
 
 The simulated engine runs inside the page, so its measured lag excludes the sound card. To include
@@ -282,7 +294,7 @@ public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
 public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, bench)
 public/engine-sim.js         in-browser simulated engine
-tools/                       udp-listen (SimHub stand-in), make-test-wav, bench
+tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV)
 ```
 
 ## Next: POC 2

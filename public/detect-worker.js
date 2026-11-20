@@ -6,6 +6,7 @@ import { Pipeline } from './pipeline.js';
 
 let pipe = null, audioPort = null;
 let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
+let rec = null; // { need, got, chunks: Float32Array[], rows: [] } while recording
 
 self.onmessage = e => {
   const m = e.data;
@@ -17,6 +18,8 @@ self.onmessage = e => {
     pipe.configure(m.cfg);
   } else if (m.type === 'reset' && pipe) {
     pipe.reset();
+  } else if (m.type === 'record' && pipe) {
+    rec = { need: Math.round(m.seconds * pipe.fs), got: 0, chunks: [], rows: [] };
   }
 };
 
@@ -25,6 +28,7 @@ function onChunk(e) {
   if (m.type !== 'chunk' || !pipe) return;
   pipe.push(m.raw, m.dec);
   lastT = m.t;
+  if (rec) { rec.chunks.push(m.raw); rec.got += m.raw.length; } // the worker owns these (transferred)
   let sum = 0;
   for (let i = 0; i < m.raw.length; i++) sum += m.raw[i] * m.raw[i];
   peakRms = Math.max(peakRms, Math.sqrt(sum / m.raw.length));
@@ -45,4 +49,16 @@ function run() {
   const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
   peakRms = 0;
   self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl });
+  if (rec) {
+    const f = v => (v == null ? '' : Math.round(v));
+    rec.rows.push([lastT.toFixed(4), f(r.pd?.raw), f(r.pd?.rpm), r.pd?.f0 ? r.pd.f0.toFixed(2) : '', f(r.gyro?.raw), f(r.gyro?.rpm),
+      r.gyro?.f0 ? r.gyro.f0.toFixed(2) : '', r.cyl.n, r.cyl.locked ?? '', levelDb.toFixed(1)].join(','));
+    if (rec.got >= rec.need) {
+      const samples = new Float32Array(rec.got);
+      let o = 0;
+      for (const c of rec.chunks) { samples.set(c, o); o += c.length; }
+      self.postMessage({ type: 'recording', fs: pipe.fs, samples, rows: rec.rows }, [samples.buffer]);
+      rec = null;
+    }
+  }
 }

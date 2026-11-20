@@ -192,6 +192,7 @@ async function start() {
 
 function stop() {
   running = false;
+  recUntil = 0;
   worker?.terminate(); worker = null;
   sim?.stop(); sim = null;
   stream?.getTracks().forEach(t => t.stop()); stream = null;
@@ -204,10 +205,48 @@ function stop() {
   drawTach();
 }
 
+// ---------- recording: 15 s of the detectors' input + their readings ----------
+const REC_SECONDS = 15;
+let recUntil = 0;
+function startRecording() {
+  if (!running || !worker) { setMsg('Press Start first: the recorder saves what the detectors are hearing.'); return; }
+  worker.postMessage({ type: 'record', seconds: REC_SECONDS });
+  recUntil = performance.now() + REC_SECONDS * 1000;
+}
+function download(blob, name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function wavBlob(samples, fs) { // 16-bit PCM mono
+  const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const str = (o, x) => { for (let i = 0; i < x.length; i++) v.setUint8(o + i, x.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, fs, true);
+  v.setUint32(28, fs * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767))), true);
+  return new Blob([buf], { type: 'audio/wav' });
+}
+function saveRecording(m) {
+  recUntil = 0;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  const label = $('source').selectedOptions[0]?.textContent || 'audio';
+  const src = label.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+  const base = `audio-rpm-${src}-${stamp}`;
+  const settings = { ...S, scales, truthCylinders: sim?.cylinders ?? null };
+  const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}\n` +
+    `# settings: ${JSON.stringify(settings)}\n` +
+    't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db\n' + m.rows.join('\n') + '\n';
+  download(wavBlob(m.samples, m.fs), base + '.wav');
+  download(new Blob([csv], { type: 'text/csv' }), base + '.csv');
+  setMsg(`Saved ${base}.wav (what the detectors heard) and ${base}.csv (their readings) to your Downloads.`);
+}
+
 // ---------- results from the worker ----------
 let resultsThisSecond = 0, peakLevel = -120, silentSince = 0;
 function onResult(e) {
   const m = e.data;
+  if (m.type === 'recording') { saveRecording(m); return; }
   if (m.type !== 'result' || !ac) return;
   const tNow = ac.currentTime;
   const wall = performance.now();
@@ -494,6 +533,8 @@ function drawCards() {
   };
   show('gyro', last.gyro); show('pd', last.pd);
   $('cyl-state').textContent = cylText().long;
+  $('rec').textContent = recUntil ? `● ${Math.max(0, Math.ceil((recUntil - performance.now()) / 1000))} s` : '● Rec 15 s';
+  $('rec').style.color = recUntil ? 'var(--bad)' : '';
   if (simRandom && !simRandom.revealed) {
     const locked = last.cyl?.locked, waited = (performance.now() - simRandom.started) / 1000;
     if (locked != null || waited > 20) {
@@ -529,6 +570,7 @@ function showScales() {
 // ---------- UI wiring ----------
 $('start').onclick = () => (running ? stop() : start());
 $('refresh').onclick = () => listInputs(true);
+$('rec').onclick = startRecording;
 $('source').onchange = () => { store.set('source', $('source').value); if (running) start(); };
 $('hear').onchange = () => { store.set('hear', $('hear').checked); if (monitor) monitor.gain.value = $('hear').checked ? 1 : 0; };
 $('loopback').onchange = () => { store.set('loopback', $('loopback').checked); if (running && !$('source').value.startsWith('sim:')) start(); };
