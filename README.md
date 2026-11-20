@@ -2,7 +2,8 @@
 
 Estimate engine RPM from game audio, for games that send no telemetry (DiRT Rally 2.0 on PS5).
 POC 1 listens to whatever your Mac is playing. It runs two detectors side by side so you can compare
-them, shows the result on a tachometer, and measures the lag from sound to RPM live. It can also send
+them, counts the engine's cylinders by itself (or takes the count you pick), shows the result on a
+tachometer, and measures the lag from sound to RPM live. It can also send
 the RPM to SimHub as DiRT Rally 2.0 UDP telemetry, but that output is **paused by default**.
 
 ```
@@ -124,18 +125,18 @@ shifting sweep, adding one optimization at a time. 4 cylinders, 900–7,500 rpm:
 
 | | lag | error mean / p90 (rpm) | glitches | process time |
 |---|---|---|---|---|
-| POC 1 settings: 20 ms timer, reading stamped when computed | 56 ms | 178 / 254 | 3.6% | 0.30 ms |
-| + run on every 5.3 ms audio chunk | 56 ms | 177 / 255 | 3.4% | 0.31 ms |
-| + stamp at window centre, predict forward | 14 ms | 143 / 219 | 3.5% | 0.33 ms |
-| + tracker τ 0.05 s | 14 ms | 128 / 132 | 3.4% | 0.31 ms |
-| + adaptive pitch window (**default**) | −2 ms | **53 / 58** | **0.9%** | **0.11 ms** |
+| POC 1 settings: 20 ms timer, reading stamped when computed | 56 ms | 179 / 269 | 3.7% | 0.41 ms |
+| + run on every 5.3 ms audio chunk | 56 ms | 178 / 255 | 3.5% | 0.40 ms |
+| + stamp at window centre, predict forward | 14 ms | 145 / 218 | 3.5% | 0.40 ms |
+| + tracker τ 0.05 s | 14 ms | 130 / 135 | 3.5% | 0.36 ms |
+| + adaptive pitch window (**default**) | −2 ms | **54 / 63** | **0.9%** | **0.34 ms** |
 
 **gyroball (engine-tuned, FFT 8192)**
 
 | | lag | error mean / p90 (rpm) | glitches | process time |
 |---|---|---|---|---|
-| POC 1 settings | 84 ms | 269 / 349 | 4.2% | 0.68 ms |
-| all optimizations (**default**) | 0 ms | 188 / 301 | 4.1% | 0.65 ms |
+| POC 1 settings | 86 ms | 264 / 342 | 4.2% | 0.65 ms |
+| all optimizations (**default**) | 0 ms | 181 / 277 | 3.9% | 0.67 ms |
 
 *lag* is measured, not computed: the delay that best aligns the output with the true RPM, using only
 moments when the revs are ramping. *Error* is at the same instant, lag included, which is what the
@@ -154,8 +155,14 @@ What each step does:
   is the largest single gain.
 - **Adaptive pitch window.** The window is about 2.5 periods of 60% of the current engine tone (so a
   gear-shift drop still fits): 85 ms at idle, about 17 ms near redline on a 4-cylinder. Shorter windows also mean
-  less smearing across a shift, hence the drop in error and glitches. HPS can't use it (it needs
-  power-of-two FFT sizes), so it stays on the fixed window.
+  less smearing across a shift, hence the drop in error and glitches. Windows of 25 ms or less read
+  the full-rate audio instead of the 12 kHz copy: at 12 kHz a V8–V12's tone near redline spans too few
+  samples and YIN slips an octave. HPS can't adapt (it needs power-of-two FFT sizes), so it stays on
+  the fixed window.
+- **Octave check in pitch-detection.** Engines have strong half-order tones, so the waveform can repeat
+  only every two firings and a period detector then reads half the RPM. If the sound repeats almost
+  as well at half the detected period, the firing tone is the octave above. Without it, a simulated
+  V12 locked at half its RPM after gear shifts.
 - **Tracker fixes for shifts.** While readings are rejected or missing, velocity bleeds off instead
   of extrapolating (POC 1 could overshoot past redline during a shift). A new level is accepted once
   it persists for 15 ms.
@@ -163,6 +170,47 @@ What each step does:
   smeared spectrum fit upper harmonics of a low frequency with no fundamental, which read as
   idle-like dips. The engine-tuned variant now requires the fundamental to be present. The window
   length itself remains gyroball's limit: it can't react faster than its window.
+
+## Cylinders: auto-detection
+
+The detected pitch alone can't give the RPM: a 4-cylinder at 6,000 rpm and a V8 at 3,000 rpm fire at
+the same rate. The cylinder selector in the top bar offers:
+
+- **Auto · rally (4/5/6/8)**, the default. Every DiRT Rally 2.0 car has 4, 5, 6 or 8 cylinders:
+  mostly 4; the Audi quattro S1 E2 5; the Metro 6R4, Stratos, Porsche 911s, BMW M1/M2 and Datsun 240Z 6;
+  the Rally GT V8s (Aston Martin Vantage, Camaro, Mustang) 8.
+- **Auto · any (4–12)**, for other engines, such as a V10 or V12.
+- **4, 5, 6, 8, 10 or 12** by hand.
+
+How auto works: no two cylinders fire exactly alike, so an engine's sound also repeats once per engine
+cycle (two crank turns). That adds faint tones between the firing harmonics, spaced by firing ÷ N. For
+each candidate N, `public/detectors/cylinders.js` checks whether those tones stand out against the
+spectrum halfway between them, and takes the largest N that fits (a V8's pattern contains a
+4-cylinder's, never the reverse). It runs every 0.1 s while the revs are steady (idle, cruising), on
+a 0.7 s spectrum, or 1.4 s when the firing tone is below 60 Hz (small engines near idle), and locks
+once one count holds a clear majority of recent votes. Until then, RPM is computed as a 4-cylinder and
+the tach shows "auto…".
+
+`npm run bench -- --auto` on the simulated sweep, where the only steady moments are idle:
+
+| engine | mode | locked | after | wrong lock | pitch error | gyroball error |
+|---|---|---|---|---|---|---|
+| 4 cylinders | rally | 4 | 1.6 s | 0% | 55 rpm | 180 rpm |
+| 5 cylinders | rally | 5 | 1.6 s | 0% | 37 rpm | 153 rpm |
+| 6 cylinders | rally | 6 | 1.6 s | 0% | 55 rpm | 94 rpm |
+| V8 | rally | 8 | 1.0 s | 0% | 46 rpm | 105 rpm |
+| V10 | any | 10 | 0.9 s | 0% | 30 rpm | 122 rpm |
+| V12 | any | 12 | 0.9 s | 0% | 28 rpm | 128 rpm |
+| **V12** | **rally** | **4** | 0.9 s | **97%** | 2,351 rpm | 2,082 rpm |
+
+The last row is the price of the rally set: an engine outside it is miscounted with confidence (a V12's
+tones contain a 4-cylinder's pattern), reading 3× the real RPM. So use **Auto · any** for anything that
+isn't a DiRT Rally 2.0 car.
+
+What this can't know: it relies on the faint per-cylinder tones. A perfectly regular engine (the
+simulator with them switched off) is never given a count, rather than a wrong one. Real game audio
+has not been measured yet; a car whose loudest tone isn't the firing tone (some boxers and cross-plane
+V8s) may need the count picked by hand or **Calibrate**.
 
 ## What the detector comparison found
 
@@ -182,7 +230,8 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 
 ## Settings
 
-- **Cylinders / idle / redline**: the search band and the Hz → rpm conversion (also sent to SimHub).
+- **Cylinders** (top bar): see above. **Idle / redline**: the search band (also sent to SimHub).
+- **Simulated engine**: the simulated engine's cylinder count (4, 5, 6, V8, V10, V12), to try auto-detection.
 - **Chunk**: how often detection runs (2.7 / 5.3 / 11 ms). Smaller = less waiting, more CPU.
 - **Predict ahead**: compensates the half-window delay. **Adaptive pitch window**: see above.
   **Pitch max window**: the window at idle and when nothing is locked.
@@ -195,8 +244,9 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, detectors (4/6/8 cyl), tracker, pipeline, lag estimator
+npm test          # packet layout, detectors (4–12 cyl), cylinder detection, tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
+npm run bench -- --auto   # cylinder auto-detection on every engine
 ```
 
 ## Layout
@@ -208,7 +258,8 @@ public/index.html, app.js    UI: tachometer, cards, latency panel, chart, settin
 public/capture-worklet.js    audio thread: chunks raw + low-passed audio to the worker
 public/detect-worker.js      runs the pipeline on each chunk, skips backlog
 public/pipeline.js           both detectors, adaptive window, trackers, prediction (shared with bench/tests)
-public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js (pitch-detection wrapper)
+public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js (pitch-detection wrapper),
+                             cylinders.js (cylinder count from the engine-cycle tones)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
 public/lag.js                measured-lag estimator
 public/ring.js               ring buffer

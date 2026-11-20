@@ -11,7 +11,8 @@
   and forwards RPM to SimHub over UDP (paused by default).
 - Detection lives in `public/pipeline.js`, shared by the browser worker (`detect-worker.js`),
   `tools/bench.js` and the tests. Change detection logic there, not in the UI.
-- `npm run bench` measures lag and error per optimization step. Re-run it after touching the
+- `npm run bench` measures lag and error per optimization step; `npm run bench -- --auto` measures
+  cylinder auto-detection. Re-run it after touching the
   pipeline, tracker or detectors, and update the tables in README.md if the numbers change.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

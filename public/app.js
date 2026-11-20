@@ -1,5 +1,5 @@
 import { EngineSim } from './engine-sim.js';
-import { firingHz } from './engine-model.js';
+import { firingHz, CYLINDERS, RALLY_CYLINDERS } from './engine-model.js';
 import { estimateLag } from './lag.js';
 
 const $ = id => document.getElementById(id);
@@ -9,10 +9,10 @@ const LAG_S = 8;         // measured-lag window
 
 // ---------- persisted settings (localStorage may be unavailable: never let it throw) ----------
 const store = {
-  get(k, d) { try { const v = localStorage.getItem('ab2.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('ab2.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
+  get(k, d) { try { const v = localStorage.getItem('ab3.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('ab3.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
-const SETTING_IDS = ['cylinders', 'idle', 'redline', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
+const SETTING_IDS = ['cylinders', 'simcyl', 'idle', 'redline', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
 const isBox = id => $(id).type === 'checkbox';
 const val = id => (isBox(id) ? $(id).checked : $(id).value);
 for (const id of SETTING_IDS) {
@@ -30,7 +30,9 @@ const num = (id, lo, hi, d) => { const v = Number($(id).value); return Number.is
 function readSettings() {
   const gm = $('gmode').value;
   return {
-    cylinders: num('cylinders', 1, 12, 4),
+    cylinders: $('cylinders').value.startsWith('auto') ? 'auto' : Number($('cylinders').value),
+    autoCandidates: $('cylinders').value === 'auto-any' ? CYLINDERS : RALLY_CYLINDERS,
+    simcyl: Number($('simcyl').value) || 4,
     idle: num('idle', 300, 3000, 900),
     redline: num('redline', 2000, 20000, 7500),
     hop: Number($('hop').value) || 256,
@@ -49,7 +51,7 @@ function readSettings() {
 let S = readSettings();
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
-  cylinders: S.cylinders, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
+  cylinders: S.cylinders, autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
   gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
   pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
   tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
@@ -111,7 +113,7 @@ async function start() {
     let src;
     captureMs = 0;
     if (choice === 'sim') {
-      sim = new EngineSim(ac, { cylinders: S.cylinders, idleRpm: S.idle, redline: S.redline });
+      sim = new EngineSim(ac, { cylinders: S.simcyl, idleRpm: S.idle, redline: S.redline });
       src = sim.output;
       monitor = ac.createGain();
       monitor.gain.value = $('hear').checked ? 1 : 0;
@@ -132,7 +134,7 @@ async function start() {
       const l = stream.getAudioTracks()[0]?.getSettings?.().latency;
       captureMs = Number.isFinite(l) ? l * 1000 : 0;
       if (loop) { // play the simulated engine to the speakers (and BlackHole); analyse what comes back
-        sim = new EngineSim(ac, { cylinders: S.cylinders, idleRpm: S.idle, redline: S.redline });
+        sim = new EngineSim(ac, { cylinders: S.simcyl, idleRpm: S.idle, redline: S.redline });
         sim.output.connect(ac.destination);
       }
     }
@@ -160,7 +162,7 @@ async function start() {
     resultsThisSecond = 0; peakLevel = -120; silentSince = 0;
     running = true;
     $('start').textContent = 'Stop';
-    setMsg(choice === 'sim' ? 'Simulated engine: idle, four pulls with gear shifts, back to idle (loops).'
+    setMsg(choice === 'sim' ? `Simulated ${cylName(S.simcyl)} engine: idle, four pulls with gear shifts, back to idle (loops).`
       : loop ? 'Loopback test: the simulated engine plays on the Mac output and is analysed from the selected input.' : '');
     requestAnimationFrame(draw);
   } catch (e) {
@@ -331,6 +333,8 @@ function drawTach() {
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
   g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
   g.fillText('× 1000', cx, cy - R * 0.38);
+  g.fillStyle = last?.cyl?.locked || S.cylinders !== 'auto' ? css('--text') : css('--warn');
+  g.fillText(cylText().short, cx, cy - R * 0.38 + 16);
   const m = measured[k];
   if (m !== null) { g.fillStyle = color[k]; g.fillText(`measured lag ${Math.round(m)} ms`, cx, cy + R * 0.62 + 34); }
 }
@@ -371,7 +375,7 @@ function drawSpectrum() {
   const { g, w, h } = setupCanvas($('spec'));
   const gy = last?.gyro;
   if (!gy?.ex) return;
-  const fLo = firingHz(S.idle * 0.7, S.cylinders), fHi = firingHz(S.redline * 1.15, S.cylinders);
+  const fLo = firingHz(S.idle * 0.7, cylNow()), fHi = firingHz(S.redline * 1.15, cylNow());
   const XMAX = Math.max(200, Math.min(1500, fHi * 1.6)), YMAX = 50, padB = 16;
   const X = hz => (hz / XMAX) * w, Y = d => (h - padB) - (Math.max(0, Math.min(YMAX, d)) / YMAX) * (h - padB - 6);
   g.fillStyle = 'rgba(63,185,255,0.07)';
@@ -386,7 +390,7 @@ function drawSpectrum() {
     if (!hz) return;
     g.strokeStyle = color; g.setLineDash(dash); g.beginPath(); g.moveTo(X(hz), 0); g.lineTo(X(hz), h - padB); g.stroke(); g.setLineDash([]);
   };
-  if (last.truth) marker(firingHz(last.truth, S.cylinders), css('--truth'), [2, 3]);
+  if (last.truth && sim) marker(firingHz(last.truth, sim.cylinders), css('--truth'), [2, 3]);
   if (gy.valid) marker(gy.f0, css('--gyro'), [5, 4]);
   if (last.pd?.valid) marker(last.pd.f0, css('--pd'), [5, 4]);
   g.strokeStyle = '#3fb9ff'; g.lineWidth = 1.2; g.beginPath();
@@ -395,6 +399,17 @@ function drawSpectrum() {
     if (i === 1) g.moveTo(x, y); else g.lineTo(x, y);
   }
   g.stroke();
+}
+
+const cylName = n => (n >= 8 ? `V${n}` : `${n}-cyl`);
+const cylNow = () => last?.cyl?.n ?? (S.cylinders === 'auto' ? 4 : S.cylinders);
+function cylText() {
+  const c = last?.cyl;
+  if (S.cylinders !== 'auto') return { short: cylName(S.cylinders), long: `${cylName(S.cylinders)} (manual)` };
+  if (!c || c.locked === null) {
+    return { short: 'auto…', long: c?.candidate ? `detecting… (${cylName(c.candidate)}?)` : 'detecting… needs steady revs' };
+  }
+  return { short: `${cylName(c.locked)} auto`, long: `${cylName(c.locked)} · ${Math.round(c.confidence * 100)}%` };
 }
 
 const avg = a => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
@@ -458,6 +473,7 @@ function drawCards() {
       : r.valid ? `${r.f0.toFixed(0)} Hz · window ${Math.round(r.winMs)} ms` : 'no clear signal';
   };
   show('gyro', last.gyro); show('pd', last.pd);
+  $('cyl-state').textContent = cylText().long;
   $('card-gyro').classList.toggle('selected', feed() === 'gyro');
   $('card-pd').classList.toggle('selected', feed() === 'pd');
   $('truth').textContent = last.truth ? `true rpm ${Math.round(last.truth).toLocaleString()}` : '';
@@ -494,7 +510,7 @@ for (const id of SETTING_IDS) {
     const prev = S; S = readSettings();
     $('pd-algo-name').textContent = S.algo;
     if (!running) return;
-    const simChanged = sim && (prev.cylinders !== S.cylinders || prev.idle !== S.idle || prev.redline !== S.redline);
+    const simChanged = sim && (prev.simcyl !== S.simcyl || prev.idle !== S.idle || prev.redline !== S.redline);
     if (simChanged || prev.hop !== S.hop) { start(); return; }
     sendConfig();
   });

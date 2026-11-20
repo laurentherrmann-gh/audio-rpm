@@ -44,5 +44,5 @@ function run() {
   }
   const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
   peakRms = 0;
-  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd });
+  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl });
 }

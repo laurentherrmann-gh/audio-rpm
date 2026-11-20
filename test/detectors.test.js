@@ -18,12 +18,14 @@ function gyroRpm(rpm, cyl, fft, tuned = true) {
 
 function pdRpm(rpm, cyl, algo) {
   const { fLo, fHi } = bandFor(cyl);
-  const frame = decimate(engineFrame({ rpm, cylinders: cyl, n: 4096 }), 4);
-  const p = detectPitch(frame, { fs: 12000, algo, fLo, fHi });
+  // like the pipeline: decimated ~12 kHz stream, but full rate (short window) above 250 Hz
+  const high = algo !== 'hps' && firingHz(rpm, cyl) > 250;
+  const frame = high ? engineFrame({ rpm, cylinders: cyl, n: 1024 }) : decimate(engineFrame({ rpm, cylinders: cyl, n: 4096 }), 4);
+  const p = detectPitch(frame, { fs: high ? 48000 : 12000, algo, fLo, fHi });
   return p.valid ? rpmFromFiringHz(p.f0, cyl) : null;
 }
 
-for (const cyl of [4, 6, 8]) {
+for (const cyl of [4, 5, 6, 8, 10, 12]) {
   for (const algo of ['yin', 'mcleod']) {
     test(`pitch-detection ${algo}: ${cyl} cyl, idle to redline within 2%`, () => {
       for (const rpm of [900, 1500, 3000, 4500, 6000, 7200]) {

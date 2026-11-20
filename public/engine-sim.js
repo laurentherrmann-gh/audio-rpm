@@ -1,7 +1,7 @@
 // In-browser engine simulator: a harmonic engine tone following the shared rpm schedule.
 // One ConstantSourceNode carries the firing frequency; each partial's oscillator frequency is
 // driven from it through a gain (= the partial's multiple), so one automation curve moves them all.
-import { PARTIALS, firingHz, makeSchedule, rpmAt, scheduleDuration } from './engine-model.js';
+import { enginePartials, firingHz, makeSchedule, rpmAt, scheduleDuration } from './engine-model.js';
 
 export class EngineSim {
   constructor(ac, { cylinders = 4, idleRpm = 900, redline = 7500, noise = 0.08 } = {}) {
@@ -16,7 +16,7 @@ export class EngineSim {
     this.base.offset.value = firingHz(this.schedule[0][1], cylinders);
     this.nodes = [this.base];
 
-    for (const [mult, amp] of PARTIALS) {
+    for (const [mult, amp] of enginePartials(cylinders)) {
       const osc = ac.createOscillator();
       osc.frequency.value = 0;
       const m = ac.createGain(); m.gain.value = mult;

@@ -2,6 +2,7 @@
 // simulated shifting sweep. Applies the lag optimizations one at a time, so each one's effect shows.
 //   npm run bench
 //   npm run bench -- --cylinders 6 --redline 8000
+//   npm run bench -- --auto          cylinder auto-detection on every supported engine
 //
 // lag     = measured end-to-end delay: the shift that best aligns output with the true rpm (median fit)
 // err     = |output − true rpm at that same instant|, lag included: what the tach / SimHub shows
@@ -11,10 +12,44 @@
 // messaging (a few ms). The page measures those live.
 import { Pipeline } from '../public/pipeline.js';
 import { estimateLag } from '../public/lag.js';
-import { makeSchedule, synthesize, rpmAt, scheduleDuration } from '../public/engine-model.js';
+import { makeSchedule, synthesize, rpmAt, scheduleDuration, CYLINDERS, RALLY_CYLINDERS } from '../public/engine-model.js';
 
 const args = Object.fromEntries(process.argv.slice(2).join(' ').split('--').filter(Boolean).map(s => s.trim().split(/\s+/)));
 const fs = 48000, D = 4;
+
+if ('auto' in args) {
+  // Cylinders = auto on the simulated sweep of each engine: time to lock, and error once locked.
+  const idle = 900, redline = 7500, hop = 256;
+  const schedule = makeSchedule({ idleRpm: idle, redline });
+  const seconds = scheduleDuration(schedule) * 2;
+  console.log(`Cylinder auto-detection, simulated sweep ${idle}–${redline} rpm, ${seconds.toFixed(0)} s per engine\n`);
+  const rows = {};
+  const runs = [...RALLY_CYLINDERS.map(c => [c, 'rally', RALLY_CYLINDERS]), [12, 'rally', RALLY_CYLINDERS],
+    ...CYLINDERS.map(c => [c, 'any', CYLINDERS])];
+  for (const [cyl, setName, autoCandidates] of runs) {
+    const signal = synthesize(schedule, { fs, seconds, cylinders: cyl });
+    const pipe = new Pipeline(fs, D, { cylinders: 'auto', autoCandidates, idle, redline });
+    let lockedAt = null, wrong = 0;
+    const err = { pd: [], gyro: [] };
+    for (let end = hop; end <= signal.length; end += hop) {
+      const raw = signal.subarray(end - hop, end), dec = new Float32Array(hop / D);
+      for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
+      pipe.push(raw, dec);
+      const t = end / fs, r = pipe.step(t);
+      if (r.cyl.locked !== null && lockedAt === null) lockedAt = t;
+      if (r.cyl.locked !== null && r.cyl.locked !== cyl) wrong++;
+      if (lockedAt === null) continue;
+      for (const k of ['pd', 'gyro']) if (r[k].rpm != null) err[k].push(Math.abs(r[k].rpm - rpmAt(schedule, t)));
+    }
+    const m = a => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : '—');
+    rows[`${cyl} cyl, auto ${setName}`] = {
+      'locked': pipe.cyl.locked, 'after (s)': lockedAt?.toFixed(2) ?? 'never', 'wrong lock': `${((100 * wrong * hop) / signal.length).toFixed(1)}%`,
+      'pitch err mean': m(err.pd), 'gyroball err mean': m(err.gyro),
+    };
+  }
+  console.table(rows);
+  process.exit(0);
+}
 const cylinders = Number(args.cylinders || 4), idle = Number(args.idle || 900), redline = Number(args.redline || 7500);
 const schedule = makeSchedule({ idleRpm: idle, redline });
 const seconds = scheduleDuration(schedule) * 2;

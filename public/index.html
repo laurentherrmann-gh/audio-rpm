@@ -64,6 +64,14 @@
   <div class="panel bar">
     <h1>audio-rpm</h1>
     <select id="source" title="Audio source"><option value="sim">Simulated engine (known RPM)</option></select>
+    <label class="inline" title="Engine cylinders. Auto counts them from the sound while the revs are steady. The rally set covers every DiRT Rally 2.0 car; use 'any' for V10/V12 engines.">cyl
+      <select id="cylinders">
+        <option value="auto" selected>Auto · rally (4/5/6/8)</option>
+        <option value="auto-any">Auto · any (4–12)</option>
+        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+        <option value="8">8</option><option value="10">10</option><option value="12">12</option>
+      </select></label>
+    <span class="status" id="cyl-state" title="Cylinder count in use"></span>
     <button id="start">Start</button>
     <button id="refresh" class="secondary" title="Ask for mic permission and list input devices">List inputs</button>
     <label class="inline"><input type="checkbox" id="hear"> hear sim</label>
@@ -143,7 +151,12 @@
   <details class="panel settings">
     <summary>Settings</summary>
     <div class="row">
-      <label>Cylinders <input type="number" id="cylinders" value="4" min="1" max="12" step="1"></label>
+      <label>Simulated engine
+        <select id="simcyl">
+          <option value="4" selected>4 cylinders</option><option value="5">5 cylinders</option><option value="6">6 cylinders</option>
+          <option value="8">V8</option><option value="10">V10</option><option value="12">V12</option>
+        </select>
+      </label>
       <label>Idle rpm <input type="number" id="idle" value="900" min="300" max="3000" step="50"></label>
       <label>Redline rpm <input type="number" id="redline" value="7500" min="2000" max="20000" step="250"></label>
       <label>Detect every
@@ -202,8 +215,12 @@
       <button class="secondary" id="cal-reset">Reset scales</button>
       <span class="status" id="scales"></span>
     </div>
-    <p class="status">Firing frequency = rpm / 60 × cylinders / 2 (4 cylinders at 6,000 rpm → 200 Hz). Exactly half or double
-    means a wrong lock: Calibrate (type the in-game rpm while holding steady revs) or change the cylinder count.
+    <p class="status">Firing frequency = rpm / 60 × cylinders / 2 (4 cylinders at 6,000 rpm → 200 Hz). <b>Auto</b> cylinders:
+    no two cylinders fire exactly alike, so the sound also repeats once per engine cycle; the faint tones this adds between the
+    firing harmonics are counted while the revs are steady (idle or cruising). <b>Auto · rally</b> only considers 4, 5, 6 and 8
+    cylinders (every DiRT Rally 2.0 car): fewer ways to be wrong and a narrower search, but a V10/V12 would be miscounted, so use
+    <b>Auto · any</b> for those. Exactly half or double the real rpm means a wrong
+    lock: pick the cylinder count by hand, or Calibrate (type the in-game rpm while holding steady revs).
     <b>Measured</b> lag needs a known truth: the simulated engine, or the loopback test for the real capture path.</p>
   </details>
 </main>
