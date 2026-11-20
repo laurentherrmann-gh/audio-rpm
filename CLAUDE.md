@@ -1,0 +1,17 @@
+# audio-rpm: instructions for Claude
+
+## Git workflow
+
+- Commit and push every change **directly to `main`**. No feature branches, no pull requests.
+- Run `npm test` before pushing; push only when it passes.
+
+## Project notes
+
+- Engine RPM is estimated from game audio in the browser (`public/`), and `server.js` serves the page
+  and forwards RPM to SimHub over UDP (paused by default).
+- Detection lives in `public/pipeline.js`, shared by the browser worker (`detect-worker.js`),
+  `tools/bench.js` and the tests. Change detection logic there, not in the UI.
+- `npm run bench` measures lag and error per optimization step. Re-run it after touching the
+  pipeline, tracker or detectors, and update the tables in README.md if the numbers change.
+- The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
+  Canvas CSS height comes from `data-h`; never read it back from the canvas element.
