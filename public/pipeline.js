@@ -15,10 +15,15 @@
 // engine (`autoCandidates`, default the rally set 4/5/6/8) until detectors/cylinders.js has counted the cylinders from the engine-cycle tones (it
 // runs every 0.1 s while the revs are steady; votes decay over a few seconds). Until it locks,
 // rpm is computed with `autoGuess` cylinders.
+//
+// Car recognition (`car: 'auto'`, with profiles given to setCars): detectors/car-id.js recognises
+// the car from its tone. In auto cylinder mode, a recognised car's cylinder count is used as soon
+// as it is known, ahead of the count from the cycle tones (which carries on only until then).
 import rfft from 'fourier-transform';
 import { analyseSpectrum } from './detectors/gyroball-core.js';
 import { detectPitch } from './detectors/pd-core.js';
 import { detectCylinders } from './detectors/cylinders.js';
+import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.js';
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -40,7 +45,7 @@ const CYL_LOCK = { votes: 3, share: 0.6 };
 const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 
 export const DEFAULTS = Object.freeze({
-  cylinders: 4, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  cylinders: 4, car: 'off', autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto' },
   pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012 },
@@ -70,6 +75,9 @@ export class Pipeline {
     this.raw = new Ring(MAX_FFT);
     this.dec = new Ring(Math.ceil(Math.max(MAX_PD_WIN, ORD_SPAN + 0.3) * this.fsDec));
     this.cyl = this.freshCyl();
+    this.cars = null;   // CarMatcher, once profiles are given
+    this.carCyl = null; // cylinder count of the recognised car
+    this.carEval = -Infinity;
     this.trackers = { gyro: new Tracker(), pd: new Tracker() };
     this.bufs = new Map();
     this.windows = new Map();
@@ -86,10 +94,41 @@ export class Pipeline {
     }
     const c = this.cfg;
     if (prev.cylinders !== c.cylinders || String(prev.autoCandidates) !== String(c.autoCandidates)) this.cyl = this.freshCyl();
+    if (prev.car !== c.car) this.forgetCar();
     if (prev.cylinders !== c.cylinders || prev.scale.gyro !== c.scale.gyro || prev.scale.pd !== c.scale.pd) this.reset();
   }
 
   reset() { this.trackers.gyro.reset(); this.trackers.pd.reset(); }
+
+  /** Car profiles ({ sigma2, cars }, from tools/cars.js), or null for none. */
+  setCars(profiles) {
+    this.cars = profiles && Object.keys(profiles.cars || {}).length ? new CarMatcher(profiles) : null;
+    this.forgetCar();
+  }
+
+  forgetCar() {
+    this.cars?.reset();
+    if (this.carCyl !== null) { this.carCyl = null; if (this.cfg.cylinders === 'auto') this.reset(); }
+  }
+
+  /** Recognise the car from the latest sound (every CAR_ID.every s). */
+  stepCar(tEnd) {
+    if (!this.cars || this.cfg.car !== 'auto' || tEnd - this.carEval < CAR_ID.every) return;
+    this.carEval = tEnd;
+    const N = carFftSize(this.fs);
+    this.cars.push(tEnd, snapshotOf(this.raw.latest(N, this.buf('cf', N)), this.fs));
+    const n = this.cars.cylinders;
+    if (n !== this.carCyl) {
+      this.carCyl = n;
+      if (this.cfg.cylinders === 'auto') { this.cyl = this.freshCyl(); this.reset(); } // rpm scale changed
+    }
+  }
+
+  /** For the page: recognition off / no profiles (null), or what it hears. */
+  carState() {
+    if (!this.cars || this.cfg.car !== 'auto') return null;
+    return this.cars.state();
+  }
 
   freshCyl() {
     return { votes: {}, locked: null, lastEval: -Infinity, lastDecay: null, last: null,
@@ -120,6 +159,7 @@ export class Pipeline {
   cylinders() {
     const c = this.cfg.cylinders;
     if (c !== 'auto') return c;
+    if (this.carCyl !== null) return this.carCyl; // the recognised car's count
     if (this.cyl.locked !== null) return this.cyl.locked;
     return Math.max(this.cfg.autoGuess, this.candidates()[0]); // smallest still-plausible count
   }
@@ -146,7 +186,7 @@ export class Pipeline {
 
   band() {
     const { idle, redline, cylinders } = this.cfg;
-    if (cylinders === 'auto') {
+    if (cylinders === 'auto' && this.carCyl === null) {
       // every still-plausible engine, even once a count is locked: a wrong lock must not narrow the
       // search so far that the tone proving it wrong (via the rpm gating) is never heard
       const cands = this.candidates();
@@ -162,6 +202,7 @@ export class Pipeline {
     const best = Object.entries(c.votes).sort((a, b) => b[1] - a[1])[0];
     return {
       mode: this.cfg.cylinders === 'auto' ? 'auto' : 'manual', n: this.cylinders(), locked: c.locked,
+      fromCar: this.cfg.cylinders === 'auto' && this.carCyl !== null,
       candidate: best ? Number(best[0]) : null, confidence: best && total ? best[1] / total : 0,
       possible: this.cfg.cylinders === 'auto' ? this.candidates() : null,
     };
@@ -214,7 +255,7 @@ export class Pipeline {
   /** Auto mode: count cylinders from the order spectrum (works while revving, not only at idle). */
   detectCyl(t) {
     const c = this.cyl;
-    if (this.cfg.cylinders !== 'auto') return;
+    if (this.cfg.cylinders !== 'auto' || this.carCyl !== null) return;
     // gating veto: a locked count that implies impossible revs is dropped
     if (c.locked !== null && !this.plausible(c.locked)) {
       delete c.votes[c.locked];
@@ -253,9 +294,10 @@ export class Pipeline {
 
   /** @param {number} tEnd time (s) of the newest sample pushed */
   step(tEnd) {
+    this.stepCar(tEnd);
     const gyro = this.cfg.gyro.enabled ? this.stepGyro(tEnd) : null;
     const pd = this.cfg.pd.enabled ? this.stepPd(tEnd) : null;
-    return { gyro, pd, cyl: this.cylState() };
+    return { gyro, pd, cyl: this.cylState(), car: this.carState() };
   }
 
   buf(key, n, Type = Float32Array) {

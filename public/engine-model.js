@@ -92,23 +92,58 @@ export function scheduleDuration(schedule) {
 }
 
 /**
- * Render the engine sound for a schedule (mono Float32Array). Deterministic noise.
- * Used by the WAV generator and the offline benchmark.
+ * A simulated car's own tone, for testing car recognition: the same engine model, coloured by
+ * harmonic strengths, a few resonances (exhaust, intake, body) and its own roughness and noise.
+ * Deterministic per seed, so "car 20" always sounds the same.
  */
-export function synthesize(schedule, { fs = 48000, seconds, cylinders = 4, gain = 0.15, noise = 0.03, cycleLevel = 0.06 } = {}) {
+export function carVoice(seed) {
+  let a = (seed * 2654435761) >>> 0;
+  const rand = () => { // mulberry32
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const between = (lo, hi) => lo + (hi - lo) * rand();
+  return {
+    seed,
+    harmonics: FIRING.map(() => 10 ** (between(-8, 8) / 20)),            // per firing harmonic, ±8 dB
+    resonances: [0, 1, 2].map(() => ({ f: 150 * 20 ** rand(), q: between(2, 5), db: between(-12, 14) })), // 150 Hz – 3 kHz
+    cycleLevel: between(0.03, 0.12),
+    noise: between(0.015, 0.05),
+  };
+}
+
+/** Gain (linear) of a voice's resonances at frequency f. */
+export function voiceGain(voice, f) {
+  let db = 0;
+  for (const r of voice.resonances) { const x = (f - r.f) / (r.f / (2 * r.q)); db += r.db / (1 + x * x); }
+  return 10 ** (db / 20);
+}
+
+/**
+ * Render the engine sound for a schedule (mono Float32Array). Deterministic noise (`seed`).
+ * Used by the WAV generator and the offline benchmark. `voice` (carVoice) gives the engine a
+ * car's own tone.
+ */
+export function synthesize(schedule, { fs = 48000, seconds, cylinders = 4, gain = 0.15, noise, cycleLevel, voice = null, seed = 1 } = {}) {
+  noise ??= voice ? voice.noise : 0.03;
+  cycleLevel ??= voice ? voice.cycleLevel : 0.06;
   const n = Math.floor(seconds * fs);
   const out = new Float32Array(n);
   const PARTIALS = enginePartials(cylinders, { cycleLevel });
+  if (voice) for (const p of PARTIALS) { const h = FIRING.findIndex(([m]) => m === p[0]); if (h >= 0) p[1] *= voice.harmonics[h]; }
   const phases = new Float64Array(PARTIALS.length);
-  let seed = 1;
+  const amps = Float64Array.from(PARTIALS, p => p[1]);
   const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff) * 2 - 1;
   for (let i = 0; i < n; i++) {
     const f = firingHz(rpmAt(schedule, i / fs), cylinders);
+    if (voice && i % 32 === 0) for (let k = 0; k < PARTIALS.length; k++) amps[k] = PARTIALS[k][1] * voiceGain(voice, PARTIALS[k][0] * f);
     let s = 0;
     for (let k = 0; k < PARTIALS.length; k++) {
       const fk = PARTIALS[k][0] * f;
       phases[k] += (2 * Math.PI * fk) / fs;
-      if (fk < fs * 0.45) s += PARTIALS[k][1] * Math.sin(phases[k]);
+      if (fk < fs * 0.45) s += amps[k] * Math.sin(phases[k]);
     }
     out[i] = s * gain + rand() * noise;
   }

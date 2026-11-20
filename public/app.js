@@ -55,7 +55,7 @@ const profiles = store.get('profiles', {});
 if (!profiles['']) profiles[''] = { idle: S.idle, redline: S.redline };
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
-  cylinders: S.cylinders, autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
+  cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
   gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
   pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
   tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
@@ -77,7 +77,12 @@ function sendConfig() { worker?.postMessage({ type: 'config', cfg: pipelineCfg()
 
 // ---------- car picker: the car gives the cylinder count; idle and redline are remembered per car ----------
 let cars = []; // the manifest's cars, plus n (number from 1, as in the tools) and key
-const carNow = () => cars.find(c => c.key === $('car').value) ?? null;
+let carProfiles = null; // learned sounds (npm run learn-cars), for "Auto · recognise"
+let heardCar = null;    // key of the car recognised from the sound
+const carByKey = key => cars.find(c => c.key === key) ?? null;
+const recognising = () => $('car').value === 'auto';
+const carNow = () => carByKey($('car').value);                 // the car picked by hand
+const profileKey = () => (recognising() ? heardCar ?? '' : $('car').value); // whose idle and redline are showing
 async function loadCars() {
   try {
     const m = await (await fetch('cars.json')).json();
@@ -88,19 +93,53 @@ async function loadCars() {
     o.value = c.key; o.textContent = `${c.car} · ${c.cylinders ? cylName(c.cylinders) : 'cyl ?'}`;
     $('car').appendChild(o);
   }
+  try {
+    const r = await fetch('car-profiles.json');
+    const p = r.ok ? await r.json() : null;
+    const known = Object.keys(p?.cars || {}).length;
+    if (known) {
+      carProfiles = p;
+      const o = $('car').options[1];
+      o.disabled = false; o.textContent = 'Auto · recognise'; o.title = `${known} cars learned`;
+      worker?.postMessage({ type: 'cars', cars: p });
+    }
+  } catch { /* no profiles: recognition stays unavailable */ }
   $('car').value = store.get('car', '');
-  if (!carNow()) { $('car').value = ''; store.set('car', ''); }
+  if ($('car').value === 'auto' ? !carProfiles : !carNow()) { $('car').value = ''; store.set('car', ''); }
+  sendConfig();
+}
+function applyRevs(key) { // a car's remembered idle and redline (or the no-car ones) into the settings
+  const own = profiles[key], p = own ?? profiles[''];
+  $('idle').value = p.idle; $('redline').value = p.redline;
+  for (const id of ['idle', 'redline']) store.set(id, val(id));
+  return { own, text: `idle ${p.idle} · redline ${p.redline} rpm` };
+}
+/** Auto · recognise: follow what the pipeline hears. */
+function onCarHeard(state) {
+  const el = $('car-state');
+  if (!recognising() || !state) { el.textContent = ''; return; }
+  const names = state.top.map(x => carByKey(x.key)?.car ?? x.key);
+  const text = state.car ? `→ ${carByKey(state.car)?.car ?? state.car}`
+    : state.listening ? 'listening…'
+      : state.cylinders && names.length ? `→ ${names.join(' or ')}`
+        : names.length ? `${names[0]}? ${Math.round(state.top[0].p * 100)}%` : 'unknown sound';
+  if (el.textContent !== text) { el.textContent = text; el.style.color = state.car || state.cylinders ? '' : 'var(--warn)'; }
+  if (state.car === heardCar || !state.car) return; // a named car stays until another one is named
+  heardCar = state.car;
+  const c = carByKey(heardCar), { own, text: revs } = applyRevs(heardCar);
+  settingsChanged();
+  setMsg(`Recognised ${c?.car ?? heardCar}${c?.cylinders ? ` (${cylName(c.cylinders)})` : ''}: ${revs}${own ? ' as you set them for this car.' : ' (not set for this car yet: change them under Settings and they are remembered for it).'}`);
 }
 function pickCar() {
-  const key = $('car').value, c = carNow(), own = profiles[key];
+  const key = $('car').value, c = carNow();
   store.set('car', key);
-  const p = own ?? profiles[''];
-  $('idle').value = p.idle; $('redline').value = p.redline;
+  heardCar = null; $('car-state').textContent = '';
+  const { own, text: revs } = applyRevs(recognising() ? '' : key);
   $('cylinders').value = c?.cylinders ? String(c.cylinders) : 'auto'; // no car, or count unknown: detect it
-  for (const id of ['idle', 'redline', 'cylinders']) store.set(id, val(id));
+  store.set('cylinders', val('cylinders'));
   settingsChanged();
-  const revs = `idle ${p.idle} · redline ${p.redline} rpm`;
-  if (!c) setMsg(`No car: cylinders back to Auto, ${revs}.`);
+  if (recognising()) setMsg(`Recognising the car from its sound. Until it is recognised: cylinders on Auto, ${revs}.` + (running ? '' : ' Press Start.'));
+  else if (!c) setMsg(`No car: cylinders back to Auto, ${revs}.`);
   else setMsg(`${c.car}: ${c.cylinders ? `${cylName(c.cylinders)} (${c.layout})` : `cylinder count not known for the game's model, so Auto detects it`}, ` +
     (own ? `${revs} as you set them for this car.` : `${revs} (not set for this car yet: change them under Settings and they are remembered for it).`));
 }
@@ -214,7 +253,7 @@ async function start() {
     worker.onerror = e => setMsg('Detection worker error: ' + (e.message || 'see the browser console'), true);
     const ch = new MessageChannel();
     worklet.port.postMessage({ port: ch.port1 }, [ch.port1]);
-    worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), port: ch.port2 }, [ch.port2]);
+    worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), cars: carProfiles, port: ch.port2 }, [ch.port2]);
 
     history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = [];
     measured.gyro = measured.pd = null;
@@ -322,6 +361,7 @@ function onResult(e) {
   while (history.length && history[0].t < wall - HIST_S * 1000) history.shift();
   if (m.gyro && !m.gyro.ex && last?.gyro) { m.gyro.ex = last.gyro.ex; m.gyro.binHz = last.gyro.binHz; }
   last = { ...m, truth };
+  onCarHeard(m.car);
 
   const r = m[feed()];
   if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, source: feed() });
@@ -443,7 +483,7 @@ function drawTach() {
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
   g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
   g.fillText('× 1000', cx, cy - R * 0.38);
-  g.fillStyle = last?.cyl?.locked || S.cylinders !== 'auto' ? css('--text') : css('--warn');
+  g.fillStyle = last?.cyl?.locked || last?.cyl?.fromCar || S.cylinders !== 'auto' ? css('--text') : css('--warn');
   g.fillText(cylText().short, cx, cy - R * 0.38 + 16);
   const m = measured[k];
   if (typeof m === 'number') { g.fillStyle = color[k]; g.fillText(`measured lag ${Math.round(m)} ms`, cx, cy + R * 0.62 + 34); }
@@ -516,6 +556,7 @@ const cylName = n => (n >= 8 ? `V${n}` : `${n}-cyl`);
 const cylNow = () => last?.cyl?.n ?? (S.cylinders === 'auto' ? 4 : S.cylinders);
 function cylText() {
   const c = last?.cyl;
+  if (c?.fromCar) return { short: `${cylName(c.n)} car`, long: `${cylName(c.n)} (recognised car)` };
   if (S.cylinders !== 'auto') return { short: cylName(S.cylinders), long: `${cylName(S.cylinders)} (${carNow()?.cylinders === S.cylinders ? 'car' : 'manual'})` };
   if (!c || c.locked === null) {
     return { short: 'auto…', long: c?.candidate ? `detecting… (${cylName(c.candidate)}?)` : 'detecting… needs steady revs' };
@@ -620,7 +661,11 @@ function showScales() {
 }
 
 // ---------- UI wiring ----------
-$('start').onclick = () => (running ? stop() : start());
+$('start').onclick = () => {
+  if (running) { stop(); return; }
+  if (recognising() && heardCar) { heardCar = null; applyRevs(''); S = readSettings(); } // a new run listens afresh
+  start();
+};
 $('refresh').onclick = () => listInputs(true);
 $('rec').onclick = toggleRecording;
 $('car').onchange = pickCar;
@@ -634,7 +679,7 @@ for (const id of SETTING_IDS) {
     store.set(id, val(id));
     settingsChanged();
     if (id === 'idle' || id === 'redline') { // typed by the user: remember them for this car
-      profiles[$('car').value] = { idle: S.idle, redline: S.redline };
+      profiles[profileKey()] = { idle: S.idle, redline: S.redline };
       store.set('profiles', profiles);
     }
   });

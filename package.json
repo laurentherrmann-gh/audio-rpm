@@ -15,7 +15,9 @@
     "bench": "node tools/bench.js",
     "analyze": "node tools/analyze.js",
     "fetch-dr2": "node tools/fetch-dr2.js",
-    "eval-dr2": "node tools/eval-dr2.js"
+    "eval-dr2": "node tools/eval-dr2.js",
+    "learn-cars": "node tools/cars.js learn",
+    "eval-cars": "node tools/cars.js eval"
   },
   "dependencies": {
     "pitch-detection": "^1.0.0",

@@ -4,6 +4,7 @@
 //  - sends it to SimHub as DiRT Rally 2.0 UDP telemetry at SEND_HZ, when UDP output is on
 //    (off by default: SIMHUB_UDP=on to start with it on, or use the toggle in the page)
 import http from 'node:http';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createSocket } from 'node:dgram';
 import path from 'node:path';
@@ -26,6 +27,8 @@ const MOUNTS = [
   ['/', path.join(ROOT, 'public')],
 ];
 const CARS = path.join(ROOT, 'samples/dr2-cars.json');
+// learned by `npm run learn-cars`; absent until then (the page then has no "Auto · recognise")
+const CAR_PROFILES = path.resolve(ROOT, process.env.CAR_PROFILES || 'samples/dr2/car-profiles.json');
 // Browsers can't resolve bare package names inside workers, so rewrite them when serving JS
 // (the same specifiers resolve from node_modules when the modules run in Node for tests).
 const BARE = /((?:from|import)\s*\(?\s*)(['"])(pitch-detection\/[^'"]+|fourier-transform)\2/g;
@@ -41,6 +44,10 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/') pathname = '/index.html';
     let file;
     if (pathname === '/cars.json') file = CARS; // the car picker's list
+    else if (pathname === '/car-profiles.json') {
+      file = CAR_PROFILES;
+      if (!existsSync(file)) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end('{"cars":{}}'); return; }
+    }
     else {
       const [prefix, dir] = MOUNTS.find(([p]) => pathname.startsWith(p));
       file = path.resolve(dir, '.' + pathname.slice(prefix.length - 1));

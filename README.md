@@ -69,6 +69,8 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
   redline are remembered per car: set them once under Settings with the car picked. The list doesn't
   include each car's redline; the game's values aren't in it. Recordings made with a car picked are
   named `audio-rpm-carNN-…`, and `eval-dr2 --file` reads the car from that name.
+  **Auto · recognise** names the car from its sound instead (see [Car recognition](#car-recognition));
+  it is available once `npm run learn-cars` has learned the cars.
 - **Tachometer:** needle and readout for the detector picked with *on tach*; the other detector is the
   thin needle; the white mark on the rim is the true RPM (simulation). The 15 shift lights run from
   72% to 97% of redline, then flash.
@@ -295,6 +297,51 @@ simulator with them switched off) is never given a count, rather than a wrong on
 has not been measured yet; a car whose loudest tone isn't the firing tone (some boxers and cross-plane
 V8s) may need the count picked by hand or **Calibrate**.
 
+## Car recognition
+
+With **car → Auto · recognise**, the page names the car from its sound and uses that car's cylinder
+count, idle and redline. It needs each car's sound learned first:
+
+```sh
+npm run fetch-dr2 -- --source dr2.wav --offset auto   # the 82 clips (see above)
+npm run learn-cars                                     # → samples/dr2/car-profiles.json; then reload the page
+npm run eval-cars                                      # how well it tells the clips apart → samples/dr2/results-cars.md
+npm run learn-cars -- --file ~/Downloads/audio-rpm-car20-….wav   # add a recording of your own driving of car 20
+npm run eval-cars -- --file some-recording.wav         # what is recognised in a recording, second by second
+```
+
+**How.** Shazam-style fingerprints match one exact recording, and a car in a game never plays the same
+sound twice. What a car keeps is its tone at each engine speed and load. A profile is up to 32 typical
+"snapshots" of the car's sound per recording: the level of 20 third-octave bands from 80 Hz to 8 kHz,
+whatever the volume (`public/detectors/car-id.js`). Ten times a second the live sound's snapshot is
+compared with every car's; the evidence adds up over about 6 seconds, against an "unknown sound"
+option that wins when the sound is far from every car. Nothing in it uses the rpm or the cylinder
+detection, so it can give them the cylinder count.
+
+**What it does with the answer.** Cars that sound alike split the evidence, so no car is named, but if
+they share a cylinder count (they usually do) the count is still used. In Auto cylinder mode a
+recognised count replaces the one counted from the engine-cycle tones; a count you pick by hand is
+never overridden. A named car stays until another car is named: silence or other sounds don't erase it.
+
+**How good.** Measured on simulated cars only: 82 engines with the real cars' cylinder counts, each
+given its own tone, two pairs made to sound identical, learned from a 40 s drive (idle, then pulls to
+the redline) and recognised on 12 s of rally-style driving it was not learned from.
+
+| simulated cars | result |
+|---|---|
+| car named, right | 78 of 82 |
+| car named, wrong | 0 |
+| not named (the two identical-sounding pairs) | 4, cylinder count still right |
+| cylinder count | 80 of 80 right, known 2.8 s after the sound starts |
+| a sound unlike every car (V12 with another tone) | left unrecognised |
+
+Real game audio has not been measured: `npm run eval-cars` does it on your clips. Two things to expect.
+The clips come from one video with its own camera and mix, so profiles learned from it may be far from
+your in-game sound: add recordings of your own driving with `learn-cars -- --file`. And a sound that
+resembles a learned car can be taken for it (`unknown: 6` in `CAR_ID` sets how far is too far; 8 of 30
+simulated engines with no profile but a tone of the same kind were matched to some car), so use
+Auto · recognise for DiRT Rally 2.0 only.
+
 ## What the detector comparison found
 
 - **Original gyroball fails on engines.** Engines produce half-order tones, so the candidate at half
@@ -327,7 +374,7 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, car list, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
+npm test          # packet layout, car list, car recognition, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 ```
@@ -342,7 +389,8 @@ public/capture-worklet.js    audio thread: chunks raw + low-passed audio to the 
 public/detect-worker.js      runs the pipeline on each chunk, skips backlog
 public/pipeline.js           both detectors, adaptive window, trackers, prediction (shared with bench/tests)
 public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js (pitch-detection wrapper),
-                             cylinders.js (cylinder count from the engine-cycle tones)
+                             cylinders.js (cylinder count from the engine-cycle tones),
+                             car-id.js (car recognition from the tone: snapshots, profiles, matcher)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
 public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
@@ -350,7 +398,8 @@ public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, 
 public/engine-sim.js         in-browser simulated engine
 public/cars.js               car keys and file names, shared by the car picker and the dataset tools
 tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV),
-                             fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), lib/audio.js (WAV + replay)
+                             fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), cars (learn-cars / eval-cars:
+                             car profiles and how well cars are recognised), lib/audio.js (WAV + replay)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 

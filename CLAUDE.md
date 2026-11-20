@@ -14,5 +14,8 @@
 - `npm run bench` measures lag and error per optimization step; `npm run bench -- --auto` measures
   cylinder auto-detection. Re-run it after touching the
   pipeline, tracker or detectors, and update the tables in README.md if the numbers change.
+- Car recognition is `public/detectors/car-id.js` (thresholds in `CAR_ID`), learned and measured by
+  `tools/cars.js` (`npm run learn-cars`, `npm run eval-cars`). Its thresholds were set on simulated
+  cars only; retune them on the user's `samples/dr2/results-cars.md` when it exists.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

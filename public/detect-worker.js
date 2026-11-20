@@ -3,6 +3,7 @@
 // the meantime are all pushed first and only the newest moment is analysed: the backlog is skipped,
 // it never turns into lag.
 import { Pipeline } from './pipeline.js';
+import { loadProfiles } from './detectors/car-id.js';
 
 let pipe = null, audioPort = null;
 let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
@@ -12,10 +13,13 @@ self.onmessage = e => {
   const m = e.data;
   if (m.type === 'init') {
     pipe = new Pipeline(m.fs, m.D, m.cfg);
+    if (m.cars) pipe.setCars(loadProfiles(m.cars));
     audioPort = m.port;
     audioPort.onmessage = onChunk;
   } else if (m.type === 'config' && pipe) {
     pipe.configure(m.cfg);
+  } else if (m.type === 'cars' && pipe) {
+    pipe.setCars(loadProfiles(m.cars));
   } else if (m.type === 'reset' && pipe) {
     pipe.reset();
   } else if (m.type === 'record' && pipe) {
@@ -58,7 +62,7 @@ function run() {
   }
   const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
   peakRms = 0;
-  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl });
+  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl, car: r.car });
   if (rec) {
     const f = v => (v == null ? '' : Math.round(v));
     rec.rows.push([lastT.toFixed(4), f(r.pd?.raw), f(r.pd?.rpm), r.pd?.f0 ? r.pd.f0.toFixed(2) : '', f(r.gyro?.raw), f(r.gyro?.rpm),
