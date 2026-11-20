@@ -6,8 +6,10 @@
 //  - parameters instead of DOM reads, engine-sized defaults
 //  - while readings are rejected, velocity bleeds off instead of extrapolating (no overshoot past
 //    redline during a shift)
-//  - re-acquire as soon as `confirm` consecutive rejected readings agree with each other
-//    (a real shift), not only after a fixed time; single-frame octave errors still get rejected
+//  - re-acquire as soon as rejected readings have agreed with each other for `confirmMs` (a real
+//    shift), not only after a fixed time; single-frame octave errors still get rejected. This is a
+//    time, not a count: readings taken every few ms from long overlapping windows agree with each
+//    other trivially, so the caller should scale confirmMs with its window length.
 
 export class Tracker {
   constructor(opts = {}) {
@@ -16,13 +18,13 @@ export class Tracker {
   }
 
   set({ tau = 0.1, maxAccel = 40000, maxVel = 40000, margin = 300, lag = 0.05, coast = 0.7,
-        reacquire = 0.25, confirm = 3, agree = 0.04 } = {}) {
-    Object.assign(this, { tau, maxAccel, maxVel, margin, lag, coast, reacquire, confirm, agree });
+        reacquire = 0.25, confirmMs = 40, agree = 0.04 } = {}) {
+    Object.assign(this, { tau, maxAccel, maxVel, margin, lag, coast, reacquire, confirmMs, agree });
   }
 
   reset() {
     this.x = null; this.v = 0; this.tLast = 0; this.tAccept = 0; this.rejectSince = 0;
-    this.cand = null; this.candN = 0;
+    this.cand = null; this.candN = 0; this.candSince = 0;
   }
 
   /**
@@ -40,12 +42,15 @@ export class Tracker {
       return { rpm: z, coast: false };
     }
 
-    const dt = Math.min(0.2, (now - this.tLast) / 1000);
-    this.tLast = now;
+    // readings are stamped at their window centre; with an adaptive window that time can step
+    // backwards slightly, which must not run the prediction in reverse
+    const dt = Math.max(0, Math.min(0.2, (now - this.tLast) / 1000));
+    this.tLast = Math.max(this.tLast, now);
     this.x += this.v * dt;
     const T = (now - this.tAccept) / 1000;
 
     if (z === null) {
+      this.v *= Math.exp(-dt / 0.05); // hold, don't extrapolate through a gap
       if (T > this.coast) { this.x = null; return null; }
       return { rpm: this.x, coast: true };
     }
@@ -54,10 +59,11 @@ export class Tracker {
     if (Math.abs(z - this.x) > gate) {
       this.v *= Math.exp(-dt / 0.05);
       if (this.cand !== null && Math.abs(z - this.cand) <= this.agree * this.cand) this.candN++;
-      else this.candN = 1;
+      else { this.candN = 1; this.candSince = now; }
       this.cand = z;
       if (!this.rejectSince) this.rejectSince = now;
-      if (this.candN >= this.confirm || now - this.rejectSince > this.reacquire * 1000) {
+      const confirmed = this.candN >= 2 && now - this.candSince >= this.confirmMs;
+      if (confirmed || now - this.rejectSince > this.reacquire * 1000) {
         start(z); return { rpm: z, coast: false };
       }
       return { rpm: this.x, coast: true };

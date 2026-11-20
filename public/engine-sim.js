@@ -50,9 +50,14 @@ export class EngineSim {
     }
   }
 
+  /** True rpm at audio-clock time t (seconds). */
+  truthAt(t) {
+    return rpmAt(this.schedule, t - this.t0);
+  }
+
   /** True rpm right now. */
   truth() {
-    return rpmAt(this.schedule, this.ac.currentTime - this.t0);
+    return this.truthAt(this.ac.currentTime);
   }
 
   stop() {

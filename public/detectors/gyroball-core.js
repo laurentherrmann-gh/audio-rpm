@@ -11,6 +11,10 @@
 //  - optional octave check (off = original behaviour). Engines have half-order tones, so the
 //    candidate at half the firing frequency explains nearly the same peaks and often wins by a
 //    hair. With octaveCheck, if twice the winner scores at least OCTAVE_RATIO of it, take twice.
+//  - optional requireFundamental: a reading only counts if the fundamental itself is one of the
+//    matched peaks. During a gear shift the long window holds sound from both sides of the shift;
+//    the smeared spectrum then "explains" a few upper harmonics of some low frequency, without its
+//    fundamental, and the original would report it (idle-like dips at every shift).
 
 const MIN_SCORE = 8;
 const OCTAVE_RATIO = 0.8;
@@ -28,7 +32,7 @@ function interp(a, i) {
  * @param {{fLo:number, fHi:number, mode?:'auto'|1|2|3|4, maxHz?:number, nHarm?:number, octaveCheck?:boolean}} opts
  * @returns {{f0:number, score:number, harmonics:number[], valid:boolean, ex:Float32Array, nb:number}}
  */
-export function analyseSpectrum(db, binHz, { fLo, fHi, mode = 'auto', maxHz = 1500, nHarm = 8, octaveCheck = false }) {
+export function analyseSpectrum(db, binHz, { fLo, fHi, mode = 'auto', maxHz = 1500, nHarm = 8, octaveCheck = false, requireFundamental = false }) {
   const nb = Math.min(db.length - 1, Math.floor(maxHz / binHz));
   const W = 40;
   const val = i => (Number.isFinite(db[i]) ? db[i] : -140);
@@ -99,6 +103,6 @@ export function analyseSpectrum(db, binHz, { fLo, fHi, mode = 'auto', maxHz = 15
     if (den > 0 && mode === 'auto') f0 = num / den;
   }
 
-  const valid = f0 > 0 && score >= MIN_SCORE && harmonics.length > 0;
+  const valid = f0 > 0 && score >= MIN_SCORE && harmonics.length > 0 && (!requireFundamental || harmonics[0] === 1);
   return { f0, score, harmonics, valid, ex, nb };
 }

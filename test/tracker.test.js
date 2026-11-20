@@ -17,13 +17,14 @@ test('a single octave-error frame is rejected', () => {
   assert.ok(Math.abs(out.rpm - 5000) < 100, `held at ${out.rpm}`);
 });
 
-test('a gear shift is accepted after 3 agreeing readings, without overshoot', () => {
-  const tr = new Tracker(opts);
+test('a gear shift is accepted once readings agree for confirmMs, without overshoot', () => {
+  const tr = new Tracker({ ...opts, confirmMs: 40 });
   const ramp = Array.from({ length: 30 }, (_, i) => 5000 + i * 60); // climbing ~3000 rpm/s
   feed(tr, ramp);
   const after = feed(tr, [4800, 4810, 4820, 4830], 30 * TICK);
   assert.ok(after.every(o => o.rpm < 7400), 'no overshoot past the last reading');
-  assert.equal(after[2].coast, false, 'accepted on the third agreeing reading');
+  assert.equal(after[1].coast, true, 'not yet: 20 ms of agreement');
+  assert.equal(after[2].coast, false, 'accepted after 40 ms of agreement');
   assert.ok(Math.abs(after[2].rpm - 4820) < 50);
 });
 

@@ -1,74 +1,75 @@
-// Offline benchmark: runs both detectors + trackers over the simulated shifting sweep, exactly as
-// the page does (20 ms ticks, same windows, same tracker settings), and compares with the true rpm.
+// Offline benchmark of the detection pipeline (the same code the browser worker runs) on the
+// simulated shifting sweep. Applies the lag optimizations one at a time, so each one's effect shows.
 //   npm run bench
-//   npm run bench -- --cylinders 6
-// Differences from the browser: no AnalyserNode smoothing and no biquad before decimation
-// (the synthetic signal has nothing above the decimated Nyquist except white noise).
-import rfft from 'fourier-transform';
-import { analyseSpectrum } from '../public/detectors/gyroball-core.js';
-import { detectPitch, decimate } from '../public/detectors/pd-core.js';
-import { Tracker } from '../public/tracker.js';
-import { makeSchedule, synthesize, rpmAt, scheduleDuration, firingHz, rpmFromFiringHz } from '../public/engine-model.js';
+//   npm run bench -- --cylinders 6 --redline 8000
+//
+// lag     = measured end-to-end delay: the shift that best aligns output with the true rpm (median fit)
+// err     = |output − true rpm at that same instant|, lag included: what the tach / SimHub shows
+// glitches = share of time the output is more than 1,500 rpm off (wrong locks, dips at shifts)
+// compute = time to run the detector once (this machine)
+// Not included here: capture latency of the sound card / BlackHole, and worklet→worker→page
+// messaging (a few ms). The page measures those live.
+import { Pipeline } from '../public/pipeline.js';
+import { estimateLag } from '../public/lag.js';
+import { makeSchedule, synthesize, rpmAt, scheduleDuration } from '../public/engine-model.js';
 
 const args = Object.fromEntries(process.argv.slice(2).join(' ').split('--').filter(Boolean).map(s => s.trim().split(/\s+/)));
-const fs = 48000, D = 4, TICK = 0.02;
+const fs = 48000, D = 4;
 const cylinders = Number(args.cylinders || 4), idle = Number(args.idle || 900), redline = Number(args.redline || 7500);
 const schedule = makeSchedule({ idleRpm: idle, redline });
 const seconds = scheduleDuration(schedule) * 2;
 const signal = synthesize(schedule, { fs, seconds, cylinders });
-const fLo = firingHz(idle * 0.7, cylinders), fHi = firingHz(redline * 1.15, cylinders);
+const truth = t => rpmAt(schedule, t);
 
-function analyserDb(frame) { // Blackman window, |X|/N, dB — like AnalyserNode
-  const N = frame.length, w = new Float64Array(N);
-  for (let i = 0; i < N; i++) { const a = (2 * Math.PI * i) / N; w[i] = (0.42 - 0.5 * Math.cos(a) + 0.08 * Math.cos(2 * a)) * frame[i]; }
-  const mag = rfft(w), db = new Float32Array(N / 2);
-  for (let i = 0; i < N / 2; i++) db[i] = 20 * Math.log10(Math.max(mag[i] / N, 1e-12));
-  return db;
-}
-
-function run(name, win, estimate) {
-  const tr = new Tracker({ tau: 0.08, maxAccel: 40000, maxVel: 40000, reacquire: 0.25, lag: win / fs / 2 });
-  const errs = []; let ticks = 0, locked = 0, rawOk = 0, octave = 0;
-  for (let t = win / fs; t < seconds; t += TICK) {
-    const end = Math.floor(t * fs), frame = signal.subarray(end - win, end);
-    const raw = estimate(frame);
-    const out = tr.step(raw, t * 1000);
-    const now = rpmAt(schedule, t), centre = rpmAt(schedule, t - win / fs / 2);
-    ticks++;
-    if (raw !== null) {
-      if (Math.abs(raw - centre) / centre < 0.03) rawOk++;
-      else if (Math.abs(raw - centre / 2) / centre < 0.05 || Math.abs(raw - centre * 2) / centre < 0.1) octave++;
+function run(hop, cfg) {
+  const pipe = new Pipeline(fs, D, { cylinders, idle, redline, ...cfg });
+  const pts = { gyro: [], pd: [] }, comp = { gyro: [], pd: [] };
+  for (let end = hop; end <= signal.length; end += hop) {
+    const raw = signal.subarray(end - hop, end);
+    const dec = new Float32Array(hop / D);
+    for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
+    pipe.push(raw, dec);
+    const t = end / fs, r = pipe.step(t);
+    for (const k of ['gyro', 'pd']) {
+      if (!r[k]) continue;
+      pts[k].push({ t, y: r[k].rpm });
+      comp[k].push(r[k].computeMs);
     }
-    if (out) { locked++; errs.push(Math.abs(out.rpm - now)); }
   }
-  errs.sort((a, b) => a - b);
-  const mean = errs.reduce((a, b) => a + b, 0) / (errs.length || 1);
-  const p90 = errs[Math.floor(errs.length * 0.9)] ?? NaN;
-  return {
-    name, window: `${Math.round((win / fs) * 1000)} ms`,
-    'raw ok (±3%)': pct(rawOk, ticks), 'octave errs': pct(octave, ticks), locked: pct(locked, ticks),
-    'SimHub err mean': Math.round(mean), 'SimHub err p90': Math.round(p90),
-  };
+  const out = {};
+  for (const k of ['gyro', 'pd']) {
+    if (!pts[k].length) continue;
+    const errs = pts[k].filter(p => p.y != null && p.t > 1).map(p => Math.abs(p.y - truth(p.t))).sort((a, b) => a - b);
+    const lag = estimateLag(pts[k].filter(p => p.t > 1), truth);
+    const c = comp[k].slice(50).sort((a, b) => a - b);
+    out[k] = {
+      'lag (ms)': lag ? Math.round(lag.lag * 1000) : '—',
+      'err mean': Math.round(errs.reduce((a, b) => a + b, 0) / errs.length),
+      'err p90': Math.round(errs[Math.floor(errs.length * 0.9)]),
+      'glitches': ((100 * errs.filter(e => e > 1500).length) / errs.length).toFixed(1) + '%',
+      'compute avg (ms)': (c.reduce((a, b) => a + b, 0) / c.length).toFixed(2),
+      'compute p99 (ms)': c[Math.floor(c.length * 0.99)].toFixed(2),
+    };
+  }
+  return out;
 }
-const pct = (a, b) => `${Math.round((100 * a) / b)}%`;
 
-const gyro = (fft, engineTuned) => frame => {
-  const g = analyseSpectrum(analyserDb(frame), fs / fft, engineTuned
-    ? { fLo, fHi, octaveCheck: true, maxHz: Math.min(fs * 0.45, Math.max(1500, fHi * 8)) }
-    : { fLo, fHi });
-  return g.valid ? rpmFromFiringHz(g.f0, cylinders) : null;
-};
-const pd = algo => frame => {
-  const p = detectPitch(decimate(frame, D), { fs: fs / D, algo, fLo, fHi });
-  return p.valid ? rpmFromFiringHz(p.f0, cylinders) : null;
-};
+const POC1 = { timestamp: 'end', predict: false, tracker: { tau: 0.08 }, pd: { adaptive: false } };
+const steps = [
+  ['POC 1 (20 ms timer, stamped at end)', 960, POC1],
+  ['+ run on every 5.3 ms chunk', 256, POC1],
+  ['+ stamp at window centre + predict', 256, { ...POC1, timestamp: 'centre', predict: true }],
+  ['+ tracker τ 0.05', 256, { ...POC1, timestamp: 'centre', predict: true, tracker: { tau: 0.05 } }],
+  ['+ adaptive pitch window (= new default)', 256, {}],
+];
 
-console.log(`raw ok = detector within 3% of the true rpm at the window centre (accuracy, lag removed)\nSimHub err = |tracked rpm − true rpm now| in rpm (what SimHub actually gets, lag included)\n\nSimulated sweep, ${cylinders} cylinders, ${idle}–${redline} rpm, ${seconds.toFixed(0)} s, ticks every ${TICK * 1000} ms\n`);
-console.table([
-  run('gyroball 8192 (original)', 8192, gyro(8192, false)),
-  run('gyroball 8192 engine-tuned', 8192, gyro(8192, true)),
-  run('gyroball 16384 engine-tuned', 16384, gyro(16384, true)),
-  run('pitch-detection mcleod', 4096, pd('mcleod')),
-  run('pitch-detection yin', 4096, pd('yin')),
-  run('pitch-detection hps', 4096, pd('hps')),
-]);
+console.log(`Simulated sweep, ${cylinders} cyl, ${idle}–${redline} rpm, ${seconds.toFixed(0)} s. gyroball: engine-tuned FFT 8192. pitch-detection: YIN.\n`);
+for (const k of ['pd', 'gyro']) {
+  console.log(k === 'pd' ? 'pitch-detection (YIN)' : 'gyroball (engine-tuned, FFT 8192)');
+  const rows = {};
+  for (const [name, hop, cfg] of steps) {
+    if (k === 'gyro' && name.startsWith('+ adaptive')) continue; // pitch-detection only
+    rows[name] = run(hop, cfg)[k];
+  }
+  console.table(rows);
+}

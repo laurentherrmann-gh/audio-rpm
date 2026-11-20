@@ -1,7 +1,8 @@
 // audio-bridge server:
 //  - serves the browser UI (public/) and the two npm packages the UI imports (/vendor/...)
 //  - receives the selected RPM from the page over WebSocket (/ws)
-//  - sends it to SimHub as DiRT Rally 2.0 UDP telemetry at SEND_HZ
+//  - sends it to SimHub as DiRT Rally 2.0 UDP telemetry at SEND_HZ, when UDP output is on
+//    (off by default: SIMHUB_UDP=on to start with it on, or use the toggle in the page)
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createSocket } from 'node:dgram';
@@ -17,12 +18,19 @@ const SIMHUB_PORT = Number(process.env.SIMHUB_PORT || 20777);
 const SEND_HZ = Number(process.env.SEND_HZ || 60);
 const RPM_DIVISOR = Number(process.env.RPM_DIVISOR || 10);
 const STALE_MS = 1500; // stop sending when the page goes quiet
+let udpOn = /^(1|on|true|yes)$/i.test(process.env.SIMHUB_UDP || '');
 
 const MOUNTS = [
   ['/vendor/pitch-detection/', path.join(ROOT, 'node_modules/pitch-detection')],
   ['/vendor/fourier-transform/', path.join(ROOT, 'node_modules/fourier-transform')],
   ['/', path.join(ROOT, 'public')],
 ];
+// Browsers can't resolve bare package names inside workers, so rewrite them when serving JS
+// (the same specifiers resolve from node_modules when the modules run in Node for tests).
+const BARE = /((?:from|import)\s*\(?\s*)(['"])(pitch-detection\/[^'"]+|fourier-transform)\2/g;
+const resolveBare = js => js.replace(BARE, (m, pre, q, spec) =>
+  pre + q + (spec === 'fourier-transform' ? '/vendor/fourier-transform/index.js' : '/vendor/' + spec) + q);
+
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 const server = http.createServer(async (req, res) => {
@@ -33,7 +41,8 @@ const server = http.createServer(async (req, res) => {
     const [prefix, dir] = MOUNTS.find(([p]) => pathname.startsWith(p));
     const file = path.resolve(dir, '.' + pathname.slice(prefix.length - 1));
     if (!file.startsWith(dir + path.sep)) { res.writeHead(403).end(); return; }
-    const body = await readFile(file);
+    let body = await readFile(file);
+    if (file.endsWith('.js')) body = resolveBare(body.toString('utf8'));
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(body);
   } catch {
@@ -50,6 +59,7 @@ wss.on('connection', ws => {
   ws.on('message', data => {
     let m;
     try { m = JSON.parse(data); } catch { return; }
+    if (m.type === 'udp') { udpOn = Boolean(m.enabled); console.log(`UDP output ${udpOn ? 'ON' : 'paused'}`); return; }
     if (m.type !== 'rpm') return;
     state.rpm = num(m.rpm, 0, 30000, 0);
     state.maxRpm = num(m.maxRpm, 1000, 30000, state.maxRpm);
@@ -65,7 +75,7 @@ const t0 = Date.now();
 let sent = 0, sentLastSecond = 0, lastError = '';
 
 setInterval(() => {
-  if (Date.now() - state.updated > STALE_MS) return;
+  if (!udpOn || Date.now() - state.updated > STALE_MS) return;
   const pkt = buildDr2Packet({ time: (Date.now() - t0) / 1000, ...state }, { rpmDivisor: RPM_DIVISOR });
   udp.send(pkt, SIMHUB_PORT, SIMHUB_HOST, err => { if (err) lastError = err.message; });
   sent++;
@@ -74,7 +84,7 @@ setInterval(() => {
 setInterval(() => {
   sentLastSecond = sent; sent = 0;
   const status = JSON.stringify({
-    type: 'status', target: `${SIMHUB_HOST}:${SIMHUB_PORT}`, packetsPerSec: sentLastSecond,
+    type: 'status', udp: udpOn, target: `${SIMHUB_HOST}:${SIMHUB_PORT}`, packetsPerSec: sentLastSecond,
     rpm: Math.round(state.rpm), source: state.source, error: lastError,
   });
   for (const c of wss.clients) if (c.readyState === 1) c.send(status);
@@ -83,4 +93,5 @@ setInterval(() => {
 server.listen(HTTP_PORT, () => {
   console.log(`audio-bridge UI:        http://localhost:${HTTP_PORT}`);
   console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, ${SEND_HZ} Hz)`);
+  console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);
 });

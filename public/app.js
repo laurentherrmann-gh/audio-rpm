@@ -1,25 +1,28 @@
-import { analyseSpectrum } from './detectors/gyroball-core.js';
-import { detectPitch, decimate } from './detectors/pd-core.js';
-import { Tracker } from './tracker.js';
 import { EngineSim } from './engine-sim.js';
-import { firingHz, rpmFromFiringHz } from './engine-model.js';
+import { firingHz } from './engine-model.js';
+import { estimateLag } from './lag.js';
 
 const $ = id => document.getElementById(id);
-const TICK_MS = 20;      // detector + send rate (50 Hz); the server re-sends to SimHub at 60 Hz
 const HIST_S = 20;       // chart window
+const STATS_S = 2;       // latency averages
+const LAG_S = 8;         // measured-lag window
 
 // ---------- persisted settings (localStorage may be unavailable: never let it throw) ----------
 const store = {
-  get(k, d) { try { const v = localStorage.getItem('ab.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('ab.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
+  get(k, d) { try { const v = localStorage.getItem('ab2.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('ab2.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
-const SETTING_IDS = ['cylinders', 'idle', 'redline', 'fft', 'gvariant', 'gmode', 'algo', 'pdwin', 'tau', 'accel', 'reacq', 'actual'];
+const SETTING_IDS = ['cylinders', 'idle', 'redline', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
+const isBox = id => $(id).type === 'checkbox';
+const val = id => (isBox(id) ? $(id).checked : $(id).value);
 for (const id of SETTING_IDS) {
   const v = store.get(id, null);
-  if (v !== null) $(id).value = v;
+  if (v === null) continue;
+  if (isBox(id)) $(id).checked = v; else $(id).value = v;
 }
 $('hear').checked = store.get('hear', false);
-const feedStored = store.get('feed', 'gyro');
+$('loopback').checked = store.get('loopback', false);
+const feedStored = store.get('feed', 'pd');
 document.querySelectorAll('input[name=feed]').forEach(r => { r.checked = r.value === feedStored; });
 let scales = store.get('scales', { gyro: 1, pd: 1 });
 
@@ -30,40 +33,39 @@ function readSettings() {
     cylinders: num('cylinders', 1, 12, 4),
     idle: num('idle', 300, 3000, 900),
     redline: num('redline', 2000, 20000, 7500),
-    fft: Number($('fft').value),
+    hop: Number($('hop').value) || 256,
+    predict: $('predict').checked,
+    fft: Number($('fft').value) || 8192,
     gtuned: $('gvariant').value === 'tuned',
     gmode: gm === 'auto' ? 'auto' : Number(gm),
     algo: $('algo').value,
-    pdwin: Number($('pdwin').value),
-    tau: num('tau', 0, 2, 0.08),
+    pdmax: Number($('pdmax').value) || 0.085,
+    adaptive: $('adaptive').checked,
+    tau: num('tau', 0, 2, 0.05),
     accel: num('accel', 1000, 200000, 40000),
     reacq: num('reacq', 0.05, 2, 0.25),
   };
 }
 let S = readSettings();
 const feed = () => document.querySelector('input[name=feed]:checked').value;
+const pipelineCfg = () => ({
+  cylinders: S.cylinders, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
+  gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
+  pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
+  tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
+});
 
 // ---------- state ----------
-let ac = null, srcNode = null, stream = null, sim = null, monitor = null;
-let gAn = null, pAn = null, lp = [], db = null, td = null, dec = null, D = 4;
-let timer = null, running = false;
-let history = [];
-let last = null;
-const trackers = { gyro: new Tracker(), pd: new Tracker() };
-const lastTracked = { gyro: null, pd: null };
+let ac = null, stream = null, sim = null, monitor = null, worklet = null, worker = null, nodes = [];
+let running = false, captureMs = 0, D = 4, hop = 256;
+let history = [];        // chart points
+let last = null;         // latest worker result
+const lat = { gyro: [], pd: [] };          // per-result latency samples
+const lagPts = { gyro: [], pd: [] };       // {t: audio time at delivery, y}
+const measured = { gyro: null, pd: null };
 
 function setMsg(s) { $('msg').textContent = s || ''; }
-
-function applyTrackers() {
-  const winS = { gyro: S.fft / (ac ? ac.sampleRate : 48000), pd: S.pdwin / (ac ? ac.sampleRate : 48000) };
-  for (const k of ['gyro', 'pd']) {
-    trackers[k].set({ tau: S.tau, maxAccel: S.accel, maxVel: S.accel, reacquire: S.reacq, lag: winS[k] / 2 });
-  }
-}
-
-function band() {
-  return { fLo: firingHz(S.idle * 0.7, S.cylinders), fHi: firingHz(S.redline * 1.15, S.cylinders) };
-}
+function sendConfig() { worker?.postMessage({ type: 'config', cfg: pipelineCfg() }); }
 
 // ---------- inputs ----------
 async function listInputs(askPermission) {
@@ -87,50 +89,59 @@ async function listInputs(askPermission) {
   if (askPermission && !blackhole) setMsg('No BlackHole input found: install BlackHole 2ch to capture what the Mac is playing (see README).');
 }
 
-// ---------- audio graph ----------
-function buildAnalysers() {
-  for (const n of [gAn, pAn, ...lp]) n?.disconnect();
-  D = 2 ** Math.round(Math.log2(ac.sampleRate / 12000)) || 1;
-  gAn = ac.createAnalyser();
-  gAn.fftSize = S.fft;
-  gAn.smoothingTimeConstant = 0; // no extra averaging across frames: the tracker does the smoothing
-  db = new Float32Array(gAn.frequencyBinCount);
-  const cutoff = Math.min(2500, 0.4 * ac.sampleRate / D);
-  lp = [0, 1].map(() => Object.assign(ac.createBiquadFilter(), { type: 'lowpass' }));
-  lp.forEach(f => { f.frequency.value = cutoff; f.Q.value = 0.707; });
-  pAn = ac.createAnalyser();
-  pAn.fftSize = S.pdwin;
-  td = new Float32Array(S.pdwin);
-  dec = new Float32Array(S.pdwin / D);
-  srcNode.connect(gAn);
-  srcNode.connect(lp[0]); lp[0].connect(lp[1]); lp[1].connect(pAn);
-  applyTrackers();
-}
-
+// ---------- audio graph: source → [raw, low-passed] → capture worklet → worker ----------
 async function start() {
   stop();
   try {
     ac = new AudioContext({ latencyHint: 'interactive' });
     await ac.resume();
+    await ac.audioWorklet.addModule('capture-worklet.js');
     const choice = $('source').value;
+    const loop = choice !== 'sim' && $('loopback').checked;
+    let src;
+    captureMs = 0;
     if (choice === 'sim') {
       sim = new EngineSim(ac, { cylinders: S.cylinders, idleRpm: S.idle, redline: S.redline });
-      srcNode = sim.output;
+      src = sim.output;
       monitor = ac.createGain();
       monitor.gain.value = $('hear').checked ? 1 : 0;
-      srcNode.connect(monitor).connect(ac.destination);
+      src.connect(monitor).connect(ac.destination);
     } else {
       stream = await navigator.mediaDevices.getUserMedia({ audio: {
-        deviceId: { exact: choice }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-      srcNode = ac.createMediaStreamSource(stream);
+        deviceId: { exact: choice }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, latency: 0 } });
+      src = ac.createMediaStreamSource(stream);
+      const l = stream.getAudioTracks()[0]?.getSettings?.().latency;
+      captureMs = Number.isFinite(l) ? l * 1000 : 0;
+      if (loop) { // play the simulated engine to the speakers (and BlackHole); analyse what comes back
+        sim = new EngineSim(ac, { cylinders: S.cylinders, idleRpm: S.idle, redline: S.redline });
+        sim.output.connect(ac.destination);
+      }
     }
-    buildAnalysers();
-    trackers.gyro.reset(); trackers.pd.reset();
-    history = [];
+
+    D = 2 ** Math.round(Math.log2(ac.sampleRate / 12000)) || 1;
+    hop = S.hop;
+    const lp = [0, 1].map(() => ac.createBiquadFilter());
+    lp.forEach(f => { f.type = 'lowpass'; f.frequency.value = Math.min(2500, 0.4 * ac.sampleRate / D); f.Q.value = 0.707; });
+    worklet = new AudioWorkletNode(ac, 'capture', {
+      numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { hop, D } });
+    src.connect(worklet, 0, 0);
+    src.connect(lp[0]); lp[0].connect(lp[1]); lp[1].connect(worklet, 0, 1);
+    worklet.connect(ac.destination); // silent; keeps the worklet in the render graph
+    nodes = [src, ...lp, worklet];
+
+    worker = new Worker('detect-worker.js', { type: 'module' });
+    worker.onmessage = onResult;
+    worker.onerror = e => setMsg('Detection worker error: ' + (e.message || 'see console'));
+    const ch = new MessageChannel();
+    worklet.port.postMessage({ port: ch.port1 }, [ch.port1]);
+    worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), port: ch.port2 }, [ch.port2]);
+
+    history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = [];
+    measured.gyro = measured.pd = null;
     running = true;
-    timer = setInterval(tick, TICK_MS);
     $('start').textContent = 'Stop';
-    setMsg(choice === 'sim' ? 'Simulated engine: idle, four pulls with gear shifts, back to idle (loops).' : '');
+    setMsg(choice === 'sim' ? 'Simulated engine: idle, four pulls with gear shifts, back to idle (loops).'
+      : loop ? 'Loopback test: the simulated engine plays on the Mac output and is analysed from the selected input.' : '');
     requestAnimationFrame(draw);
   } catch (e) {
     setMsg('Could not start audio: ' + e.message);
@@ -139,48 +150,59 @@ async function start() {
 }
 
 function stop() {
-  clearInterval(timer); timer = null;
   running = false;
+  worker?.terminate(); worker = null;
   sim?.stop(); sim = null;
   stream?.getTracks().forEach(t => t.stop()); stream = null;
+  for (const n of nodes) { try { n.disconnect(); } catch { /* already */ } }
+  nodes = [];
   if (ac) ac.close();
-  ac = null; srcNode = null; monitor = null; gAn = pAn = null; lp = [];
+  ac = null; monitor = null; worklet = null;
   $('start').textContent = 'Start';
-  sendRpm(null);
 }
 
-// ---------- analysis tick ----------
-function tick() {
-  if (!running) return;
-  const now = performance.now();
-  const { fLo, fHi } = band();
+// ---------- results from the worker ----------
+function onResult(e) {
+  const m = e.data;
+  if (m.type !== 'result' || !ac) return;
+  const tNow = ac.currentTime;
+  const wall = performance.now();
+  const transitMs = (tNow - m.t) * 1000; // chunk's last sample → result on the page
 
-  gAn.getFloatFrequencyData(db);
-  const g = analyseSpectrum(db, ac.sampleRate / gAn.fftSize, S.gtuned
-    ? { fLo, fHi, mode: S.gmode, octaveCheck: true, maxHz: Math.min(ac.sampleRate * 0.45, Math.max(1500, fHi * 8)) }
-    : { fLo, fHi, mode: S.gmode });
-  const gRaw = g.valid ? rpmFromFiringHz(g.f0, S.cylinders) * scales.gyro : null;
-  const gOut = trackers.gyro.step(gRaw, now);
+  for (const k of ['gyro', 'pd']) {
+    const r = m[k];
+    if (!r) continue;
+    lat[k].push({ wall, win: r.windowDelayMs, pred: r.predictedMs, comp: r.computeMs, transit: transitMs });
+    while (lat[k].length && lat[k][0].wall < wall - STATS_S * 1000) lat[k].shift();
+    if (sim) {
+      lagPts[k].push({ t: tNow, y: r.rpm });
+      while (lagPts[k].length && lagPts[k][0].t < tNow - LAG_S) lagPts[k].shift();
+    }
+  }
+  const truth = sim ? sim.truthAt(tNow) : null;
+  history.push({ t: wall, truth, g: m.gyro?.rpm ?? null, gRaw: m.gyro?.raw ?? null, p: m.pd?.rpm ?? null, pRaw: m.pd?.raw ?? null });
+  while (history.length && history[0].t < wall - HIST_S * 1000) history.shift();
+  if (m.gyro && !m.gyro.ex && last?.gyro) { m.gyro.ex = last.gyro.ex; m.gyro.binHz = last.gyro.binHz; }
+  last = { ...m, truth };
 
-  pAn.getFloatTimeDomainData(td);
-  decimate(td, D, dec);
-  const p = detectPitch(dec, { fs: ac.sampleRate / D, algo: S.algo, fLo, fHi });
-  const pRaw = p.valid ? rpmFromFiringHz(p.f0, S.cylinders) * scales.pd : null;
-  const pOut = trackers.pd.step(pRaw, now);
-
-  lastTracked.gyro = gOut?.rpm ?? null;
-  lastTracked.pd = pOut?.rpm ?? null;
-  const truth = sim ? sim.truth() : null;
-  history.push({ t: now, truth, g: lastTracked.gyro, gRaw, p: lastTracked.pd, pRaw });
-  while (history.length && history[0].t < now - HIST_S * 1000) history.shift();
-  last = { g, p, gOut, pOut, truth, fLo, fHi };
-
-  const out = feed() === 'gyro' ? gOut : pOut;
-  sendRpm(out ? Math.max(0, out.rpm) : 0);
+  const r = m[feed()];
+  if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, source: feed() });
 }
+
+// measured end-to-end lag, once a second (off the audio path)
+setInterval(() => {
+  if (!sim) return;
+  for (const k of ['gyro', 'pd']) {
+    const pts = lagPts[k];
+    const stride = Math.max(1, Math.floor(pts.length / 500));
+    const r = estimateLag(pts.filter((_, i) => i % stride === 0), t => sim.truthAt(t));
+    measured[k] = r ? r.lag * 1000 : null;
+  }
+}, 1000);
 
 // ---------- WebSocket to the server ----------
-let ws = null;
+let ws = null, udpOn = false;
+function sendWs(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => { $('ws-dot').classList.add('on'); $('ws-state').textContent = 'connected'; };
@@ -191,15 +213,13 @@ function connect() {
   ws.onmessage = e => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.type !== 'status') return;
+    udpOn = m.udp;
+    $('udp').checked = m.udp;
     $('target').textContent = m.target;
     $('pps').textContent = m.packetsPerSec;
-    $('sending').textContent = m.packetsPerSec ? `${m.rpm} rpm from ${m.source}` : '—';
+    $('udp-state').textContent = m.udp ? (m.packetsPerSec ? `· sending ${m.rpm} rpm from ${m.source}` : '· on, waiting for readings') : '· paused';
     $('udp-err').textContent = m.error ? ' · UDP error: ' + m.error : '';
   };
-}
-function sendRpm(rpm) {
-  if (!ws || ws.readyState !== 1 || rpm === null) return;
-  ws.send(JSON.stringify({ type: 'rpm', rpm, maxRpm: S.redline, idleRpm: S.idle, source: feed() }));
 }
 
 // ---------- drawing ----------
@@ -213,6 +233,64 @@ function setupCanvas(c) {
   return { g, w, h };
 }
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function drawTach() {
+  const { g, w, h } = setupCanvas($('tach'));
+  const k = feed(), other = k === 'gyro' ? 'pd' : 'gyro';
+  const color = { gyro: css('--gyro'), pd: css('--pd') };
+  const rpm = last?.[k]?.rpm ?? null, rpmOther = last?.[other]?.rpm ?? null;
+  const max = Math.ceil((S.redline * 1.1) / 1000) * 1000;
+
+  // shift lights: 15 LEDs from 72% to 97% of redline; all flash blue at the limiter
+  const n = 15, lo = S.redline * 0.72, hi = S.redline * 0.97, ledW = Math.min(22, (w - 40) / n - 4);
+  const x0 = (w - n * (ledW + 4)) / 2, flash = rpm !== null && rpm >= hi && Math.floor(performance.now() / 90) % 2;
+  for (let i = 0; i < n; i++) {
+    const on = rpm !== null && rpm >= lo + ((hi - lo) * i) / (n - 1);
+    const base = i < 5 ? '#34c759' : i < 10 ? '#ffcc00' : '#ff3b30';
+    g.fillStyle = flash ? '#3fb9ff' : on ? base : '#1f262e';
+    g.beginPath(); g.arc(x0 + i * (ledW + 4) + ledW / 2, 18, ledW / 2, 0, Math.PI * 2); g.fill();
+  }
+
+  // dial: 270° sweep
+  const cx = w / 2, cy = h * 0.58, R = Math.min(w * 0.4, h * 0.44);
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  const ang = v => a0 + (Math.min(Math.max(v, 0), max) / max) * (a1 - a0);
+  g.lineCap = 'butt';
+  g.lineWidth = 12; g.strokeStyle = '#1f262e'; g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke();
+  g.strokeStyle = '#ff3b30'; g.beginPath(); g.arc(cx, cy, R, ang(S.redline), a1); g.stroke();
+  if (rpm !== null) { g.strokeStyle = color[k] + '55'; g.beginPath(); g.arc(cx, cy, R, a0, ang(rpm)); g.stroke(); }
+  g.fillStyle = css('--dim'); g.strokeStyle = css('--dim'); g.font = '600 13px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let v = 0; v <= max; v += 500) {
+    const a = ang(v), major = v % 1000 === 0, r1 = R - 8, r2 = R - (major ? 22 : 15);
+    g.lineWidth = major ? 2 : 1;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); g.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); g.stroke();
+    if (major) { g.fillStyle = v >= S.redline ? '#ff6b6b' : css('--dim'); g.fillText(String(v / 1000), cx + Math.cos(a) * (R - 36), cy + Math.sin(a) * (R - 36)); }
+  }
+  // truth marker on the rim
+  if (last?.truth) {
+    const a = ang(last.truth);
+    g.strokeStyle = css('--truth'); g.lineWidth = 3;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * (R + 9), cy + Math.sin(a) * (R + 9)); g.lineTo(cx + Math.cos(a) * (R - 6), cy + Math.sin(a) * (R - 6)); g.stroke();
+  }
+  const needle = (v, c, width, len) => {
+    const a = ang(v);
+    g.strokeStyle = c; g.lineWidth = width; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(cx - Math.cos(a) * 14, cy - Math.sin(a) * 14); g.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len); g.stroke();
+  };
+  if (rpmOther !== null) needle(rpmOther, color[other] + 'aa', 2, R - 20);
+  needle(rpm ?? 0, rpm === null ? '#3a444f' : '#f5f7fa', 4, R - 12);
+  g.fillStyle = color[k]; g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.fill();
+
+  g.textBaseline = 'alphabetic';
+  g.fillStyle = rpm === null ? css('--dim') : css('--text');
+  g.font = '700 40px system-ui';
+  g.fillText(rpm === null ? '—' : Math.round(rpm).toLocaleString(), cx, cy + R * 0.62);
+  g.font = '12px system-ui'; g.fillStyle = css('--dim');
+  g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
+  g.fillText('× 1000', cx, cy - R * 0.38);
+  const m = measured[k];
+  if (m !== null) { g.fillStyle = color[k]; g.fillText(`measured lag ${Math.round(m)} ms`, cx, cy + R * 0.62 + 34); }
+}
 
 function drawHistory() {
   const { g, w, h } = setupCanvas($('hist'));
@@ -228,7 +306,7 @@ function drawHistory() {
   }
   const dots = (key, color) => {
     g.fillStyle = color;
-    for (const p of history) if (p[key] != null) g.fillRect(X(p.t) - 1, Y(p[key]) - 1, 2, 2);
+    for (let i = 0; i < history.length; i += 2) { const p = history[i]; if (p[key] != null) g.fillRect(X(p.t) - 1, Y(p[key]) - 1, 2, 2); }
   };
   const line = (key, color, width) => {
     g.strokeStyle = color; g.lineWidth = width; g.beginPath();
@@ -240,7 +318,7 @@ function drawHistory() {
     }
     g.stroke();
   };
-  g.globalAlpha = 0.35; dots('gRaw', css('--gyro')); dots('pRaw', css('--pd')); g.globalAlpha = 1;
+  g.globalAlpha = 0.3; dots('gRaw', css('--gyro')); dots('pRaw', css('--pd')); g.globalAlpha = 1;
   line('truth', css('--truth'), 1.5);
   line('g', css('--gyro'), 2);
   line('p', css('--pd'), 2);
@@ -248,12 +326,13 @@ function drawHistory() {
 
 function drawSpectrum() {
   const { g, w, h } = setupCanvas($('spec'));
-  if (!last || !ac) return;
-  const r = last.g, binHz = ac.sampleRate / gAn.fftSize;
-  const XMAX = Math.max(200, Math.min(1500, last.fHi * 1.6)), YMAX = 50, padB = 16;
+  const gy = last?.gyro;
+  if (!gy?.ex) return;
+  const fLo = firingHz(S.idle * 0.7, S.cylinders), fHi = firingHz(S.redline * 1.15, S.cylinders);
+  const XMAX = Math.max(200, Math.min(1500, fHi * 1.6)), YMAX = 50, padB = 16;
   const X = hz => (hz / XMAX) * w, Y = d => (h - padB) - (Math.max(0, Math.min(YMAX, d)) / YMAX) * (h - padB - 6);
   g.fillStyle = 'rgba(63,185,255,0.07)';
-  g.fillRect(X(last.fLo), 0, X(last.fHi) - X(last.fLo), h - padB);
+  g.fillRect(X(fLo), 0, X(fHi) - X(fLo), h - padB);
   g.strokeStyle = css('--grid'); g.fillStyle = css('--dim'); g.font = '11px system-ui'; g.textAlign = 'center'; g.lineWidth = 1;
   const tick = XMAX > 800 ? 200 : 100;
   for (let hz = 0; hz <= XMAX; hz += tick) {
@@ -265,14 +344,52 @@ function drawSpectrum() {
     g.strokeStyle = color; g.setLineDash(dash); g.beginPath(); g.moveTo(X(hz), 0); g.lineTo(X(hz), h - padB); g.stroke(); g.setLineDash([]);
   };
   if (last.truth) marker(firingHz(last.truth, S.cylinders), css('--truth'), [2, 3]);
-  if (last.g.valid) marker(r.f0, css('--gyro'), [5, 4]);
-  if (last.p.valid) marker(last.p.f0, css('--pd'), [5, 4]);
+  if (gy.valid) marker(gy.f0, css('--gyro'), [5, 4]);
+  if (last.pd?.valid) marker(last.pd.f0, css('--pd'), [5, 4]);
   g.strokeStyle = '#3fb9ff'; g.lineWidth = 1.2; g.beginPath();
-  for (let i = 1; i <= r.nb && i * binHz <= XMAX; i++) {
-    const x = X(i * binHz), y = Y(r.ex[i]);
+  for (let i = 1; i < gy.ex.length && i * gy.binHz <= XMAX; i++) {
+    const x = X(i * gy.binHz), y = Y(gy.ex[i]);
     if (i === 1) g.moveTo(x, y); else g.lineTo(x, y);
   }
   g.stroke();
+}
+
+const avg = a => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+const pctl = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const ms = v => (Math.abs(v) < 10 ? v.toFixed(1) : Math.round(v)) + ' ms';
+
+function latencyRow(k) {
+  const L = lat[k];
+  const row = $('lat-' + k).children;
+  if (!L.length) { for (let i = 1; i < row.length; i++) row[i].textContent = '—'; $('bar-' + k).innerHTML = ''; return null; }
+  const win = avg(L.map(x => x.win)), pred = avg(L.map(x => x.pred));
+  const comp = L.map(x => x.comp), compAvg = avg(comp), compP95 = pctl(comp, 0.95);
+  const transport = Math.max(0, avg(L.map(x => x.transit)) - compAvg);
+  const wait = (hop / ac.sampleRate / 2) * 1000;
+  const est = captureMs + win - pred + wait + compAvg + transport;
+  const cells = [ms(captureMs), ms(win), pred ? '−' + ms(pred) : 'off', ms(wait), `${compAvg.toFixed(2)} / ${compP95.toFixed(2)} ms`, ms(transport), ms(est),
+    measured[k] !== null ? ms(measured[k]) : sim ? 'needs revs…' : 'sim / loopback only'];
+  cells.forEach((c, i) => { row[i + 1].textContent = c; });
+  return { capture: captureMs, window: Math.max(0, win - pred), wait, comp: compAvg, transport };
+}
+
+function drawLatency() {
+  if (!ac) return;
+  const parts = { pd: latencyRow('pd'), gyro: latencyRow('gyro') };
+  const total = p => (p ? p.capture + p.window + p.wait + p.comp + p.transport : 0);
+  const scale = Math.max(20, total(parts.pd), total(parts.gyro));
+  const colors = { capture: '#8b98a5', window: '#3fb9ff', wait: '#c792ea', comp: '#ffb020', transport: '#ff6b6b' };
+  for (const k of ['pd', 'gyro']) {
+    const p = parts[k];
+    $('bar-' + k).innerHTML = p ? Object.entries(colors).map(([key, c]) => `<span style="width:${(100 * p[key]) / scale}%;background:${c}"></span>`).join('') : '';
+  }
+  $('lat-scale').textContent = `bar width = ${Math.round(scale)} ms`;
+  const notes = [];
+  if (sim && stream) notes.push(`Loopback: the measured value includes the Mac's output latency (reported ${ms((ac.outputLatency || ac.baseLatency || 0) * 1000)}); subtract it for capture → RPM.`);
+  if (!stream) notes.push('Simulated engine runs inside the page: capture is 0 ms. Use the loopback test to include BlackHole.');
+  else if (!captureMs) notes.push('The browser did not report the input latency; the loopback test measures it.');
+  if (last?.skipped > 0) notes.push(`Detection fell behind: ${last.skipped} chunk(s) skipped (no added lag). Try a larger chunk.`);
+  $('lat-note').textContent = notes.join(' ');
 }
 
 function stats(key) {
@@ -284,22 +401,20 @@ function stats(key) {
   }
   if (!n) return '';
   if (!locked) return 'vs truth: never locked';
-  const mae = err / locked;
-  return `vs truth (${HIST_S}s): mean error ${Math.round(mae)} rpm · locked ${Math.round((100 * locked) / n)}%`;
+  return `vs truth now (${HIST_S}s): mean error ${Math.round(err / locked)} rpm · locked ${Math.round((100 * locked) / n)}%`;
 }
 
 let lastStats = 0;
 function drawCards() {
   if (!last) return;
-  const show = (k, out, sub) => {
+  const show = (k, r) => {
     const el = $(k + '-rpm');
-    if (out) { el.textContent = Math.round(out.rpm).toLocaleString(); el.classList.remove('off'); }
+    if (r && r.rpm !== null) { el.textContent = Math.round(r.rpm).toLocaleString(); el.classList.remove('off'); }
     else { el.textContent = '—'; el.classList.add('off'); }
-    $(k + '-sub').textContent = out?.coast ? 'holding (reading rejected)' : sub;
+    $(k + '-sub').textContent = !r ? '' : r.coast ? 'holding (reading rejected)'
+      : r.valid ? `${r.f0.toFixed(1)} Hz · ${r.info} · window ${Math.round(r.winMs)} ms` : 'no clear signal';
   };
-  const g = last.g, p = last.p;
-  show('gyro', last.gOut, g.valid ? `${g.f0.toFixed(1)} Hz · score ${g.score.toFixed(0)} · harmonics ${g.harmonics.join(',')}×` : 'no clear signal');
-  show('pd', last.pOut, p.valid ? `${p.f0.toFixed(1)} Hz · clarity ${p.clarity.toFixed(2)}` : 'no clear signal');
+  show('gyro', last.gyro); show('pd', last.pd);
   $('card-gyro').classList.toggle('selected', feed() === 'gyro');
   $('card-pd').classList.toggle('selected', feed() === 'pd');
   $('truth').textContent = last.truth ? `true rpm ${Math.round(last.truth).toLocaleString()}` : '';
@@ -308,12 +423,13 @@ function drawCards() {
     lastStats = now;
     $('gyro-err').textContent = sim ? stats('g') : '';
     $('pd-err').textContent = sim ? stats('p') : '';
+    drawLatency();
   }
 }
 
 function draw() {
   if (!running) return;
-  drawCards(); drawHistory(); drawSpectrum();
+  drawTach(); drawCards(); drawHistory(); drawSpectrum();
   requestAnimationFrame(draw);
 }
 
@@ -326,32 +442,30 @@ $('start').onclick = () => (running ? stop() : start());
 $('refresh').onclick = () => listInputs(true);
 $('source').onchange = () => { store.set('source', $('source').value); if (running) start(); };
 $('hear').onchange = () => { store.set('hear', $('hear').checked); if (monitor) monitor.gain.value = $('hear').checked ? 1 : 0; };
+$('loopback').onchange = () => { store.set('loopback', $('loopback').checked); if (running && $('source').value !== 'sim') start(); };
+$('udp').onchange = () => sendWs({ type: 'udp', enabled: $('udp').checked });
 document.querySelectorAll('input[name=feed]').forEach(r => { r.onchange = () => store.set('feed', feed()); });
 for (const id of SETTING_IDS) {
   $(id).addEventListener('change', () => {
-    store.set(id, $(id).value);
+    store.set(id, val(id));
     const prev = S; S = readSettings();
     $('pd-algo-name').textContent = S.algo;
     if (!running) return;
-    if (sim && (prev.cylinders !== S.cylinders || prev.idle !== S.idle || prev.redline !== S.redline)) { start(); return; }
-    if (prev.fft !== S.fft || prev.pdwin !== S.pdwin) buildAnalysers();
-    applyTrackers();
+    const simChanged = sim && (prev.cylinders !== S.cylinders || prev.idle !== S.idle || prev.redline !== S.redline);
+    if (simChanged || prev.hop !== S.hop) { start(); return; }
+    sendConfig();
   });
 }
 for (const k of ['gyro', 'pd']) {
   $('cal-' + k).onclick = () => {
-    const cur = lastTracked[k], actual = num('actual', 300, 20000, 3000);
+    const cur = last?.[k]?.rpm, actual = num('actual', 300, 20000, 3000);
     if (!cur) { setMsg(`No ${k === 'gyro' ? 'gyroball' : 'pitch'} reading to calibrate against: hold steady revs first.`); return; }
     scales[k] = (scales[k] * actual) / cur;
-    trackers[k].reset();
-    store.set('scales', scales); showScales();
+    store.set('scales', scales); showScales(); sendConfig();
     setMsg(`Calibrated ${k}: ${Math.round(cur)} → ${actual} rpm.`);
   };
 }
-$('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales', scales); showScales(); };
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && running) setMsg('This tab is hidden: Chrome slows its timers to about 1 Hz, so SimHub will get sparse updates. Keep the tab visible (its own window works).');
-});
+$('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales', scales); showScales(); sendConfig(); };
 
 $('pd-algo-name').textContent = S.algo;
 showScales();
