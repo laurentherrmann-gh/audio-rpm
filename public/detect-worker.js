@@ -7,6 +7,15 @@ import { loadProfiles } from './detectors/car-id.js';
 
 let pipe = null, audioPort = null;
 let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
+// Telemetry goes from here straight to the server (not through the page, whose main thread Chrome
+// slows down when the tab is hidden): one message per result while UDP output is on.
+let ws = null, udpOn = false, tele = { feed: 'fused', maxRpm: 7500, idleRpm: 900 };
+function connect(url) {
+  ws = new WebSocket(url);
+  ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'status') udpOn = Boolean(m.udp); } catch { /* ignore */ } };
+  ws.onclose = () => { udpOn = false; setTimeout(() => connect(url), 1000); };
+  ws.onerror = () => { /* onclose follows */ };
+}
 let shiftSeen = null; // time of the last shift written to a recording
 let rec = null; // { need, got, chunks: Float32Array[], rows: [] } while recording; stops at need or on 'record-stop'
 
@@ -17,8 +26,12 @@ self.onmessage = e => {
     if (m.cars) pipe.setCars(loadProfiles(m.cars));
     audioPort = m.port;
     audioPort.onmessage = onChunk;
+    if (m.tele) tele = m.tele;
+    if (m.ws) connect(m.ws);
   } else if (m.type === 'config' && pipe) {
     pipe.configure(m.cfg);
+  } else if (m.type === 'tele') {
+    tele = m.tele;
   } else if (m.type === 'cars' && pipe) {
     pipe.setCars(loadProfiles(m.cars));
   } else if (m.type === 'reset' && pipe) {
@@ -63,6 +76,10 @@ function run() {
   }
   const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
   peakRms = 0;
+  if (udpOn && ws?.readyState === 1) {
+    const out = r[tele.feed];
+    if (out) ws.send(JSON.stringify({ type: 'rpm', rpm: out.rpm ?? 0, maxRpm: tele.maxRpm, idleRpm: tele.idleRpm, gear: r.gear.gear ?? 0, source: tele.feed }));
+  }
   self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, fused: r.fused, cyl: r.cyl, car: r.car, gear: r.gear });
   if (rec) {
     const f = v => (v == null ? '' : Math.round(v));

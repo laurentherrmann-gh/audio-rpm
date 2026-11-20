@@ -65,14 +65,15 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 ## The page
 
 - **Car** (top bar): the 82 DiRT Rally 2.0 cars. Picking one sets its cylinder count, which is certain
-  where auto-detection can be wrong (the two cars whose count isn't known stay on Auto). Idle and
-  redline are remembered per car: set them once under Settings with the car picked. The list doesn't
+  where auto-detection can be wrong (the two cars whose count isn't known stay on Auto). Idle, redline
+  and the calibration are remembered per car: set them once under Settings with the car picked. The list doesn't
   include each car's redline; the game's values aren't in it. Recordings made with a car picked are
   named `audio-rpm-carNN-…`, and `eval-dr2 --file` reads the car from that name.
   **Auto · recognise** names the car from its sound instead (see [Car recognition](#car-recognition));
   it is available once `npm run learn-cars` has learned the cars.
-- **Tachometer:** needle and readout for the detector picked with *on tach*; the other detector is the
-  thin needle; the white mark on the rim is the true RPM (simulation). The 15 shift lights run from
+- **Tachometer:** needle and readout for the rpm picked with *tach* on its card: **combined** by default
+  (see [One RPM from two detectors](#one-rpm-from-two-detectors)), or either detector alone; the thin
+  needle is gyroball (pitch-detection when gyroball is on the tach); the white mark on the rim is the true RPM (simulation). The 15 shift lights run from
   72% to 97% of redline, then flash.
 - **Latency: sound → RPM value**, live, per detector:
 
@@ -193,8 +194,15 @@ SIMHUB_UDP=on SIMHUB_HOST=192.168.1.50 npm start     # IP of the Windows PC runn
 | `SIMHUB_HOST` | `127.0.0.1` | where SimHub runs |
 | `SIMHUB_PORT` | `20777` | SimHub's DiRT Rally 2.0 UDP port |
 | `HTTP_PORT` | `8777` | the page |
-| `SEND_HZ` | `60` | packets per second to SimHub |
+| `HTTP_HOST` | `127.0.0.1` | the page and its control socket answer on this computer only; `0.0.0.0` opens them to the network |
+| `SEND_HZ` | `60` | packets per second to SimHub at least, while the rpm is fresh |
+| `MAX_HZ` | `250` | each new rpm is forwarded as it arrives, up to this rate (`60` if SimHub minds) |
 | `RPM_DIVISOR` | `10` | DR2 sends rpm / 10; set to `1` if SimHub shows rpm 10× too high |
+
+The rpm (the detector on the tach: **combined** by default), the gear and the idle and redline settings
+go from the detection worker straight to the server, and from there to SimHub as each one arrives.
+The page's main thread is not in that path (Chrome slows it down when the tab is hidden), and there is
+no waiting for a 60 Hz tick (which cost 8 ms on average).
 
 On the Windows PC: select **DiRT Rally 2.0** in SimHub (it may say telemetry is "not configured",
 because it can't find the game's config file there; that doesn't matter), allow inbound UDP 20777 in
@@ -384,17 +392,18 @@ Measured on the simulated stage only (`npm run bench -- --shifts`; 3 laps, shift
 
 | engine | shifts found | false | delay, median / max | ratio error (median) | gear right |
 |---|---|---|---|---|---|
-| 4 cyl | 36 of 36 | 1 | 247 / 277 ms | 1.7% | 100% |
-| 5 cyl | 36 of 36 | 1 | 243 / 263 ms | 1.7% | 100% |
-| 6 cyl | 36 of 36 | 0 | 243 / 271 ms | 1.8% | 100% |
-| 8 cyl | 36 of 36 | 0 | 240 / 263 ms | 1.8% | 100% |
+| 4 cyl | 36 of 36 | 1 | 184 / 220 ms | 0.8% | 100% |
+| 5 cyl | 36 of 36 | 2 | 185 / 204 ms | 1.0% | 100% |
+| 6 cyl | 36 of 36 | 0 | 183 / 207 ms | 0.7% | 100% |
+| 8 cyl | 36 of 36 | 0 | 180 / 209 ms | 0.8% | 100% |
 
 The delay runs from the start of the shift to its report: the shift itself (0.1 s), then the check
-that the revs have stopped moving. "Gear right" leaves out the 0.4 s around each shift. Not measured
-on game audio yet. Expect wheelspin and jumps (revs flaring with no shift) to give false shifts on
+that the revs have stopped moving (40 ms; 80 ms gave 245 ms for the same results). "Gear right" leaves
+out the 0.4 s around each shift. On the one real clip so far (DS 21), its three upshifts are found, none
+false. Expect wheelspin and jumps (revs flaring with no shift) to give false shifts on
 loose surfaces, and slow H-pattern shifts to be missed: the thresholds are in `SHIFT`.
 
-Each shift's drop is measured to about 2%, and each pair of gears has its own (×0.69 for 1→2,
+Each shift's drop is measured to about 1%, and each pair of gears has its own (×0.69 for 1→2,
 ×0.83 for 4→5 in the simulation). That is the way to an absolute gear that corrects a miscount, once
 a car's ratios are known or learned; it is not built.
 
@@ -469,7 +478,8 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 - **Predict ahead**: compensates the half-window delay. **Adaptive pitch window**: see above.
   **Pitch max window**: the window at idle and when nothing is locked.
 - **Calibrate**: hold steady revs, type the in-game RPM in *Actual rpm now*, click the detector's
-  button. Fixes a constant factor, such as a car whose loudest tone isn't the firing order.
+  button. Fixes a constant factor, such as a car whose loudest tone isn't the firing order. It is
+  remembered for the car picked (or recognised), like idle and redline; another car starts at ×1.
 - **Smoothing τ**: tracker time constant (0 = raw readings). **Max accel**: readings that jump further
   than the engine could move are treated as errors. **Re-acquire**: the longest to wait before
   accepting a new level.
@@ -481,6 +491,7 @@ npm test          # packet layout, car list, car recognition, combined rpm, shif
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 npm run bench -- --shifts # gear shifts and gear on the simulated stage
+npm run test:ui   # the page in a real browser at Retina scale (needs Playwright, see test/ui/smoke.mjs)
 ```
 
 ## Layout

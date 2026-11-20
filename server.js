@@ -14,9 +14,12 @@ import { buildDr2Packet } from './src/dr2-packet.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = Number(process.env.HTTP_PORT || 8777);
+// The page and its control socket are for this computer only; HTTP_HOST=0.0.0.0 opens them to the network.
+const HTTP_HOST = process.env.HTTP_HOST || '127.0.0.1';
 const SIMHUB_HOST = process.env.SIMHUB_HOST || '127.0.0.1';
 const SIMHUB_PORT = Number(process.env.SIMHUB_PORT || 20777);
-const SEND_HZ = Number(process.env.SEND_HZ || 60);
+const SEND_HZ = Number(process.env.SEND_HZ || 60);   // at least this often while the rpm is fresh
+const MAX_HZ = Number(process.env.MAX_HZ || 250);    // an rpm is forwarded as it arrives, up to this rate
 const RPM_DIVISOR = Number(process.env.RPM_DIVISOR || 10);
 const STALE_MS = 1500; // stop sending when the page goes quiet
 let udpOn = /^(1|on|true|yes)$/i.test(process.env.SIMHUB_UDP || '');
@@ -79,20 +82,23 @@ wss.on('connection', ws => {
     state.gear = num(m.gear, 0, 10, 0); // counted from the shifts; 0 (neutral) while unknown
     state.source = String(m.source || '').slice(0, 40);
     state.updated = Date.now();
+    if (state.updated - lastSent >= 1000 / MAX_HZ) send(); // no waiting for the next tick
   });
 });
 
 // ---- UDP output to SimHub ----
 const udp = createSocket('udp4');
 const t0 = Date.now();
-let sent = 0, sentLastSecond = 0, lastError = '';
+let sent = 0, sentLastSecond = 0, lastError = '', lastSent = 0;
 
-setInterval(() => {
+function send() {
   if (!udpOn || Date.now() - state.updated > STALE_MS) return;
   const pkt = buildDr2Packet({ time: (Date.now() - t0) / 1000, ...state }, { rpmDivisor: RPM_DIVISOR });
   udp.send(pkt, SIMHUB_PORT, SIMHUB_HOST, err => { if (err) lastError = err.message; });
-  sent++;
-}, 1000 / SEND_HZ);
+  sent++; lastSent = Date.now();
+}
+// keep-alive: when rpm arrives more slowly than SEND_HZ, repeat the last one
+setInterval(() => { if (Date.now() - lastSent >= 1000 / SEND_HZ) send(); }, 1000 / SEND_HZ / 2);
 
 setInterval(() => {
   sentLastSecond = sent; sent = 0;
@@ -103,8 +109,8 @@ setInterval(() => {
   for (const c of wss.clients) if (c.readyState === 1) c.send(status);
 }, 1000);
 
-server.listen(HTTP_PORT, () => {
+server.listen(HTTP_PORT, HTTP_HOST, () => {
   console.log(`audio-rpm UI:           http://localhost:${HTTP_PORT}`);
-  console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, ${SEND_HZ} Hz)`);
+  console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, sent as it arrives, ${SEND_HZ}–${MAX_HZ} Hz)`);
   console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);
 });

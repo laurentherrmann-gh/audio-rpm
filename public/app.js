@@ -51,9 +51,11 @@ function readSettings() {
   };
 }
 let S = readSettings();
-// Idle and redline are kept per car ('' = no car picked). First run: today's values are the no-car ones.
+// Idle, redline and the calibration are kept per car ('' = no car picked). First run: today's values
+// are the no-car ones.
 const profiles = store.get('profiles', {});
 if (!profiles['']) profiles[''] = { idle: S.idle, redline: S.redline };
+if (!profiles[''].scales) profiles[''].scales = scales; // calibration used to be one for all cars
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
   cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, maxGear: S.maxGear, scale: { ...scales }, predict: S.predict,
@@ -75,7 +77,11 @@ const measured = { gyro: null, pd: null, fused: null };
 function setMsg(s, isError = false) { $('msg').textContent = s || ''; $('msg').classList.toggle('error', Boolean(s) && isError); }
 window.addEventListener('error', e => setMsg('Error: ' + e.message, true));
 window.addEventListener('unhandledrejection', e => setMsg('Error: ' + (e.reason?.message || e.reason), true));
-function sendConfig() { worker?.postMessage({ type: 'config', cfg: pipelineCfg() }); }
+const telemetry = () => ({ feed: feed(), maxRpm: S.redline, idleRpm: S.idle }); // what the worker sends to the server
+function sendConfig() {
+  worker?.postMessage({ type: 'config', cfg: pipelineCfg() });
+  worker?.postMessage({ type: 'tele', tele: telemetry() });
+}
 
 // ---------- car picker: the car gives the cylinder count; idle and redline are remembered per car ----------
 let cars = []; // the manifest's cars, plus n (number from 1, as in the tools) and key
@@ -110,11 +116,18 @@ async function loadCars() {
   if ($('car').value === 'auto' ? !carProfiles : !carNow()) { $('car').value = ''; store.set('car', ''); }
   sendConfig();
 }
-function applyRevs(key) { // a car's remembered idle and redline (or the no-car ones) into the settings
+function applyRevs(key) { // a car's remembered idle, redline and calibration (or the no-car ones) into the settings
   const own = profiles[key], p = own ?? profiles[''];
   $('idle').value = p.idle; $('redline').value = p.redline;
   for (const id of ['idle', 'redline']) store.set(id, val(id));
+  scales = { gyro: 1, pd: 1, ...(own ? own.scales : null) }; // a calibration belongs to one car's sound
+  store.set('scales', scales); showScales();
   return { own, text: `idle ${p.idle} · redline ${p.redline} rpm` };
+}
+/** Remember the current idle, redline and calibration for the car they belong to. */
+function saveProfile() {
+  profiles[profileKey()] = { idle: S.idle, redline: S.redline, scales: { ...scales } };
+  store.set('profiles', profiles);
 }
 /** Auto · recognise: follow what the pipeline hears. */
 function onCarHeard(state) {
@@ -255,7 +268,7 @@ async function start() {
     worker.onerror = e => setMsg('Detection worker error: ' + (e.message || 'see the browser console'), true);
     const ch = new MessageChannel();
     worklet.port.postMessage({ port: ch.port1 }, [ch.port1]);
-    worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), cars: carProfiles, port: ch.port2 }, [ch.port2]);
+    worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), cars: carProfiles, tele: telemetry(), ws: `ws://${location.host}/ws`, port: ch.port2 }, [ch.port2]);
 
     history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = []; lagPts.fused = [];
     measured.gyro = measured.pd = measured.fused = null;
@@ -371,8 +384,6 @@ function onResult(e) {
   last = { ...m, truth, trueGear: sim?.gearAt(tNow) ?? null };
   onCarHeard(m.car);
 
-  const r = m[feed()];
-  if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, gear: m.gear?.gear ?? 0, source: feed() });
 }
 
 // once a second: input level, update rate, silent-input hint
@@ -699,15 +710,12 @@ $('source').onchange = () => { store.set('source', $('source').value); if (runni
 $('hear').onchange = () => { store.set('hear', $('hear').checked); if (monitor) monitor.gain.value = $('hear').checked ? 1 : 0; };
 $('loopback').onchange = () => { store.set('loopback', $('loopback').checked); if (running && !$('source').value.startsWith('sim:')) start(); };
 $('udp').onchange = () => sendWs({ type: 'udp', enabled: $('udp').checked });
-document.querySelectorAll('input[name=feed]').forEach(r => { r.onchange = () => store.set('feed', feed()); });
+document.querySelectorAll('input[name=feed]').forEach(r => { r.onchange = () => { store.set('feed', feed()); sendConfig(); }; });
 for (const id of SETTING_IDS) {
   $(id).addEventListener('change', () => {
     store.set(id, val(id));
     settingsChanged();
-    if (id === 'idle' || id === 'redline') { // typed by the user: remember them for this car
-      profiles[profileKey()] = { idle: S.idle, redline: S.redline };
-      store.set('profiles', profiles);
-    }
+    if (id === 'idle' || id === 'redline') saveProfile(); // typed by the user: remember them for this car
   });
 }
 for (const k of ['gyro', 'pd']) {
@@ -715,14 +723,18 @@ for (const k of ['gyro', 'pd']) {
     const cur = last?.[k]?.rpm, actual = num('actual', 300, 20000, 3000);
     if (!cur) { setMsg(`No ${k === 'gyro' ? 'gyroball' : 'pitch'} reading to calibrate against: hold steady revs first.`); return; }
     scales[k] = (scales[k] * actual) / cur;
-    store.set('scales', scales); showScales(); sendConfig();
-    setMsg(`Calibrated ${k}: ${Math.round(cur)} → ${actual} rpm.`);
+    store.set('scales', scales); saveProfile(); showScales(); sendConfig();
+    const c = carByKey(profileKey());
+    setMsg(`Calibrated ${k}: ${Math.round(cur)} → ${actual} rpm${c ? `, remembered for the ${c.car}` : ''}.`);
   };
 }
-$('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales', scales); showScales(); sendConfig(); };
+$('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales', scales); saveProfile(); showScales(); sendConfig(); };
 
 $('pd-algo-name').textContent = S.algo;
 showScales();
+// every canvas at its fixed height from the first paint: until the first draw, an unsized canvas takes
+// its default shape (half as tall as it is wide), which made the page 1.5 screens tall before Start
+document.querySelectorAll('canvas[data-h]').forEach(setupCanvas);
 connect();
 loadCars();
 listInputs(false);

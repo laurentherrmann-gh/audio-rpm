@@ -9,7 +9,7 @@
 // whenever the car has clearly been standing (steady revs near idle). Until then it is unknown. The drop
 // of each shift is reported (`ratio`), since every pair of gears has its own.
 export const SHIFT = Object.freeze({
-  slopeWin: 0.06,  // s over which the rate of change is measured
+  slopeWin: 0.04,  // s over which the rate of change is measured
   fast: 1.2,       // per s (of log rpm): faster than this is not the car accelerating in gear
   slow: 0.6,       // per s: slower than this, the step is over
   maxStep: 0.3,    // s: a shift's change lasts at most this
@@ -17,7 +17,7 @@ export const SHIFT = Object.freeze({
   maxChange: 0.66, // …and at most ×1.93 (÷1.93)
   octave: 0.04,    // changes within 4% of ×2 or ÷2 are the pitch detector slipping an octave
   calm: 0.12,      // s before the step in which the revs must not already be changing fast
-  hold: 0.08,      // s the revs must then stop moving that way
+  hold: 0.04,      // s the revs must then stop moving that way
   holdDrift: 0.05, // log rpm they may still move in that time
   standRevs: 1.6,  // standing = revs below this many times the idle setting…
   standBand: 0.06, // …steady within ±6%…

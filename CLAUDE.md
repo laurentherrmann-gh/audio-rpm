@@ -3,7 +3,8 @@
 ## Git workflow
 
 - Commit and push every change **directly to `main`**. No feature branches, no pull requests.
-- Run `npm test` before pushing; push only when it passes.
+- Run `npm test` before pushing; push only when it passes. After a change to the page (`public/`) or
+  `server.js`, also run `npm run test:ui` (Playwright at deviceScaleFactor 2); GitHub Actions runs both.
 
 ## Project notes
 
