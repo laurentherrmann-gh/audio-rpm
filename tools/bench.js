@@ -3,6 +3,7 @@
 //   npm run bench
 //   npm run bench -- --cylinders 6 --redline 8000
 //   npm run bench -- --auto          cylinder auto-detection on every supported engine
+//   npm run bench -- --shifts        gear shifts and gear on the simulated stage drive
 //
 // lag     = measured end-to-end delay: the shift that best aligns output with the true rpm (median fit)
 // err     = |output − true rpm at that same instant|, lag included: what the tach / SimHub shows
@@ -12,10 +13,47 @@
 // messaging (a few ms). The page measures those live.
 import { Pipeline } from '../public/pipeline.js';
 import { estimateLag } from '../public/lag.js';
-import { makeSchedule, makeNoIdleSchedule, synthesize, rpmAt, scheduleDuration, CYLINDERS, RALLY_CYLINDERS } from '../public/engine-model.js';
+import { makeSchedule, makeNoIdleSchedule, makeStageSchedule, gearAt, shiftsIn, synthesize, rpmAt, scheduleDuration, CYLINDERS, RALLY_CYLINDERS } from '../public/engine-model.js';
 
 const args = Object.fromEntries(process.argv.slice(2).join(' ').split('--').filter(Boolean).map(s => s.trim().split(/\s+/)));
 const fs = 48000, D = 4;
+
+if ('shifts' in args) {
+  // Gear shifts and gear on the simulated stage (standing start, gears 1–5 up and down, stop), 3 laps.
+  // found = true shifts reported (same direction, starting within 0.1 s); delay = from the start of
+  // the shift to its report; gear right = share of the time, shifts in progress (0.4 s) left out.
+  const idle = 900, redline = 7500, hop = 256, laps = 3;
+  const stage = makeStageSchedule({ idleRpm: idle, redline }), T = scheduleDuration(stage);
+  const truth = [];
+  for (let l = 0; l < laps; l++) for (const s of shiftsIn(stage)) truth.push({ ...s, t: s.t + l * T });
+  const rows = {};
+  for (const cyl of RALLY_CYLINDERS) {
+    const signal = synthesize(stage, { fs, seconds: laps * T, cylinders: cyl });
+    const pipe = new Pipeline(fs, D, { cylinders: cyl, idle, redline });
+    const found = [];
+    let right = 0, n = 0;
+    for (let end = hop; end <= signal.length; end += hop) {
+      const raw = signal.subarray(end - hop, end), dec = new Float32Array(hop / D);
+      for (let i = 0; i < dec.length; i++) dec[i] = raw[i * D];
+      pipe.push(raw, dec);
+      const t = end / fs, r = pipe.step(t);
+      if (r.gear.last && r.gear.last !== found.at(-1)) found.push(r.gear.last);
+      if (t > 2 && !truth.some(s => t >= s.t && t < s.t + 0.4)) { n++; if (r.gear.gear === gearAt(stage, t)) right++; }
+    }
+    const pairs = truth.map(s => [s, found.find(e => e.dir === (s.to > s.from ? 'up' : 'down') && Math.abs(e.at - s.t) < 0.1)]).filter(p => p[1]);
+    const med = a => { a.sort((x, y) => x - y); return a.length ? a[a.length >> 1] : NaN; };
+    rows[`${cyl} cyl`] = {
+      shifts: truth.length, found: pairs.length, 'false': found.length - pairs.length,
+      'delay median (ms)': Math.round(med(pairs.map(([s, e]) => (e.t - s.t) * 1000))),
+      'delay max (ms)': Math.round(Math.max(...pairs.map(([s, e]) => (e.t - s.t) * 1000))),
+      'ratio error (median)': `${(100 * med(pairs.map(([s, e]) => Math.abs(e.ratio / s.ratio - 1)))).toFixed(1)}%`,
+      'gear right': `${((100 * right) / n).toFixed(1)}%`,
+    };
+  }
+  console.log(`\nGear shifts and gear, simulated stage drive, ${(laps * T).toFixed(0)} s per engine (shifts take 0.1 s up, 0.08 s down)`);
+  console.table(rows);
+  process.exit(0);
+}
 
 if ('auto' in args) {
   // Cylinders = auto on two simulated drives: with idle, and rally-like (pulls and shifts, never idle).

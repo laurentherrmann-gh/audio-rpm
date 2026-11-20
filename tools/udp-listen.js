@@ -1,4 +1,4 @@
-// Stand-in for SimHub: listens for DiRT Rally 2.0 packets and prints the decoded rpm once a second.
+// Stand-in for SimHub: listens for DiRT Rally 2.0 packets and prints the decoded rpm and gear once a second.
 //   npm run listen                 (port 20777)
 //   PORT=20778 npm run listen
 import { createSocket } from 'node:dgram';
@@ -16,8 +16,8 @@ sock.on('message', msg => {
 
 setInterval(() => {
   if (!count) { console.log('waiting for packets…'); return; }
-  const { rpm, maxRpm, idleRpm, time } = last;
-  console.log(`${count} pkt/s  ${bytes} B  rpm ${rpm.toFixed(0).padStart(5)}  (idle ${idleRpm.toFixed(0)}, max ${maxRpm.toFixed(0)})  t=${time.toFixed(1)}s`);
+  const { rpm, maxRpm, idleRpm, gear, time } = last;
+  console.log(`${count} pkt/s  ${bytes} B  rpm ${rpm.toFixed(0).padStart(5)}  gear ${gear ? gear.toFixed(0) : '—'}  (idle ${idleRpm.toFixed(0)}, max ${maxRpm.toFixed(0)})  t=${time.toFixed(1)}s`);
   count = 0;
 }, 1000);
 

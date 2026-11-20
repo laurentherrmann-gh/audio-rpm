@@ -159,10 +159,12 @@
         <select id="simdrive">
           <option value="idle" selected>Idle, then four pulls</option>
           <option value="rally">Rally: pulls and shifts, never idle</option>
+          <option value="stage">Stage: gears 1–5 up and down (true gear known)</option>
         </select>
       </label>
       <label>Idle rpm <input type="number" id="idle" value="900" min="300" max="3000" step="50"></label>
       <label>Redline rpm <input type="number" id="redline" value="7500" min="2000" max="20000" step="250"></label>
+      <label title="Number of forward gears: the counted gear never goes above it">Gears <input type="number" id="maxgear" value="6" min="3" max="8" step="1"></label>
       <label>Detect every
         <select id="hop">
           <option value="128">128 samples (~2.7 ms)</option>

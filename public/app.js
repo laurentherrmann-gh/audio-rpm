@@ -13,7 +13,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('ab3.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('ab3.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
-const SETTING_IDS = ['cylinders', 'simdrive', 'idle', 'redline', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
+const SETTING_IDS = ['cylinders', 'simdrive', 'idle', 'redline', 'maxgear', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
 const isBox = id => $(id).type === 'checkbox';
 const val = id => (isBox(id) ? $(id).checked : $(id).value);
 for (const id of SETTING_IDS) {
@@ -36,6 +36,7 @@ function readSettings() {
     simdrive: $('simdrive').value,
     idle: num('idle', 300, 3000, 900),
     redline: num('redline', 2000, 20000, 7500),
+    maxGear: Math.round(num('maxgear', 3, 8, 6)),
     hop: Number($('hop').value) || 256,
     predict: $('predict').checked,
     fft: Number($('fft').value) || 8192,
@@ -55,7 +56,7 @@ const profiles = store.get('profiles', {});
 if (!profiles['']) profiles[''] = { idle: S.idle, redline: S.redline };
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
-  cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, scale: { ...scales }, predict: S.predict,
+  cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, maxGear: S.maxGear, scale: { ...scales }, predict: S.predict,
   gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
   pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
   tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
@@ -66,6 +67,7 @@ let ac = null, stream = null, sim = null, monitor = null, worklet = null, worker
 let running = false, captureMs = 0, D = 4, hop = 256;
 let history = [];        // chart points
 let last = null;         // latest worker result
+let lastShift = null;    // latest gear shift, with the wall time it arrived (for the tach's arrow)
 const lat = { gyro: [], pd: [] };          // per-result latency samples
 const lagPts = { gyro: [], pd: [] };       // {t: audio time at delivery, y}
 const measured = { gyro: null, pd: null };
@@ -260,7 +262,8 @@ async function start() {
     resultsThisSecond = 0; peakLevel = -120; silentSince = 0;
     running = true;
     $('start').textContent = 'Stop';
-    const driving = S.simdrive === 'rally' ? 'pulls and gear shifts, never idle' : 'idle, four pulls with gear shifts, back to idle';
+    const driving = S.simdrive === 'rally' ? 'pulls and gear shifts, never idle'
+      : S.simdrive === 'stage' ? 'a stage: standing start, gears 1–5 up and down, stop' : 'idle, four pulls with gear shifts, back to idle';
     setMsg(simRandom ? `Random engine, cylinder count hidden (${driving}). It is revealed once Auto has locked a count.`
       : isSim ? `Simulated ${cylName(sim.cylinders)} engine: ${driving} (loops).`
       : loop ? 'Loopback test: the simulated engine plays on the Mac output and is analysed from the selected input.' : '');
@@ -286,7 +289,7 @@ function stop() {
   if (ac) ac.close();
   ac = null; monitor = null; worklet = null;
   $('start').textContent = 'Start';
-  last = null;
+  last = null; lastShift = null;
   drawTach();
 }
 
@@ -327,7 +330,7 @@ function saveRecording(m) {
   const settings = { ...S, scales, truthCylinders: recTruth, car: c ? { n: c.n, car: c.car, cylinders: c.cylinders } : null };
   const csv = `# audio-rpm recording ${new Date().toISOString()} · source: ${label}${c ? ` · car #${c.n} ${c.car}` : ''}\n` +
     `# settings: ${JSON.stringify(settings)}\n` +
-    't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db\n' + m.rows.join('\n') + '\n';
+    't_audio_s,pd_raw_rpm,pd_rpm,pd_hz,gyro_raw_rpm,gyro_rpm,gyro_hz,cyl_used,cyl_locked,level_db,gear,shift,shift_ratio\n' + m.rows.join('\n') + '\n';
   download(wavBlob(m.samples, m.fs), base + '.wav');
   download(new Blob([csv], { type: 'text/csv' }), base + '.csv');
   setMsg(`Saved ${base}.wav (what the detectors heard) and ${base}.csv (their readings) to your Downloads.`);
@@ -360,11 +363,12 @@ function onResult(e) {
   history.push({ t: wall, truth, g: m.gyro?.rpm ?? null, gRaw: m.gyro?.raw ?? null, p: m.pd?.rpm ?? null, pRaw: m.pd?.raw ?? null });
   while (history.length && history[0].t < wall - HIST_S * 1000) history.shift();
   if (m.gyro && !m.gyro.ex && last?.gyro) { m.gyro.ex = last.gyro.ex; m.gyro.binHz = last.gyro.binHz; }
-  last = { ...m, truth };
+  if (m.gear?.last && m.gear.last.t !== lastShift?.t) lastShift = { ...m.gear.last, wall };
+  last = { ...m, truth, trueGear: sim?.gearAt(tNow) ?? null };
   onCarHeard(m.car);
 
   const r = m[feed()];
-  if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, source: feed() });
+  if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, gear: m.gear?.gear ?? 0, source: feed() });
 }
 
 // once a second: input level, update rate, silent-input hint
@@ -483,6 +487,19 @@ function drawTach() {
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
   g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
   g.fillText('× 1000', cx, cy - R * 0.38);
+  // gear, counted from the shifts ("?" until the car has been standing); an arrow marks a shift
+  if (running && last?.gear) {
+    const gear = last.gear.gear, fresh = lastShift && performance.now() - lastShift.wall < 600;
+    g.font = `700 ${Math.round(R * 0.17)}px system-ui`;
+    g.fillStyle = gear === null ? css('--dim') : fresh ? css('--accent') : css('--text');
+    g.fillText((gear ?? '?') + (fresh ? (lastShift.dir === 'up' ? ' ▲' : ' ▼') : ''), cx, cy + R * 0.27);
+    g.font = '12px system-ui'; g.fillStyle = css('--dim');
+    g.textAlign = 'right';
+    g.fillText('gear', cx - R * 0.14, cy + R * 0.27);
+    g.textAlign = 'left';
+    if (last.trueGear && !fresh) g.fillText(`true ${last.trueGear}`, cx + R * 0.14, cy + R * 0.27);
+    g.textAlign = 'center';
+  }
   g.fillStyle = last?.cyl?.locked || last?.cyl?.fromCar || S.cylinders !== 'auto' ? css('--text') : css('--warn');
   g.fillText(cylText().short, cx, cy - R * 0.38 + 16);
   const m = measured[k];

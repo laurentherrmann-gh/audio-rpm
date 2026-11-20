@@ -76,6 +76,7 @@ wss.on('connection', ws => {
     state.rpm = num(m.rpm, 0, 30000, 0);
     state.maxRpm = num(m.maxRpm, 1000, 30000, state.maxRpm);
     state.idleRpm = num(m.idleRpm, 0, 5000, state.idleRpm);
+    state.gear = num(m.gear, 0, 10, 0); // counted from the shifts; 0 (neutral) while unknown
     state.source = String(m.source || '').slice(0, 40);
     state.updated = Date.now();
   });

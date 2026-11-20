@@ -16,8 +16,8 @@ Mac audio ─BlackHole─▶ Chrome page (localhost:8777)
 ```
 
 The estimate comes from the pitch of the engine sound: a 4-stroke engine fires each cylinder once
-every two crank turns, so its loudest tone is at **rpm / 60 × cylinders / 2** Hz. That gives you RPM
-only: no speed, gear or G-forces.
+every two crank turns, so its loudest tone is at **rpm / 60 × cylinders / 2** Hz. That gives you RPM,
+and from the way the RPM steps, gear shifts and a counted gear: no speed or G-forces.
 
 ## Requirements
 
@@ -94,7 +94,7 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 
 **● Rec** (top bar, while running): click to start, click **■ Stop** to end (at most 2 minutes; pressing
 Stop on the app also ends and saves it). It saves two files to your Downloads: a WAV of exactly what
-the detectors received, and a CSV of their readings (pitch, gyroball, cylinder count, input level) at
+the detectors received, and a CSV of their readings (pitch, gyroball, cylinder count, input level, gear and shifts) at
 every update, with the settings in its header. Replay a recording offline through the same pipeline:
 
 ```sh
@@ -297,6 +297,41 @@ simulator with them switched off) is never given a count, rather than a wrong on
 has not been measured yet; a car whose loudest tone isn't the firing tone (some boxers and cross-plane
 V8s) may need the count picked by hand or **Calibrate**.
 
+## Gear shifts and gear
+
+In gear, the revs follow the car's speed and change gradually. A shift is a step: the revs drop
+(upshift) or jump (downshift) by a gearbox ratio in a fraction of a second, then change gradually
+again. `public/detectors/shifts.js` reports a shift when pitch-detection's rpm makes a fast, short
+change of 10% to ×1.93 that starts from calm revs and then stops. A lift, a launch and a stop are
+fast too, but last longer or change the revs more; a change of exactly ×2 or ÷2 is the pitch detector
+slipping an octave, not a shift.
+
+The rpm doesn't say which gear, so the gear is **counted**: 1st whenever the car has been standing
+(steady revs below 1.6 × the idle setting for a second), then +1 or −1 per shift, kept within 1 and
+the **Gears** setting. Until the car has stood still once it shows `?`, and one missed shift leaves
+it off by one until the next stop. The tach shows the gear and marks each shift with ▲ or ▼;
+recordings get `gear`, `shift` and `shift_ratio` columns; `npm run analyze` lists the shifts; the
+UDP packet carries the gear (0 while unknown).
+
+Measured on the simulated stage only (`npm run bench -- --shifts`; 3 laps, shifts of 0.1 s up and
+0.08 s down, drops of ×0.69 to ×0.83):
+
+| engine | shifts found | false | delay, median / max | ratio error (median) | gear right |
+|---|---|---|---|---|---|
+| 4 cyl | 36 of 36 | 1 | 248 / 293 ms | 1.7% | 98.9% |
+| 5 cyl | 36 of 36 | 1 | 243 / 289 ms | 1.6% | 100% |
+| 6 cyl | 36 of 36 | 0 | 243 / 276 ms | 1.8% | 100% |
+| 8 cyl | 36 of 36 | 0 | 245 / 283 ms | 1.8% | 100% |
+
+The delay runs from the start of the shift to its report: the shift itself (0.1 s), then the check
+that the revs have stopped moving. "Gear right" leaves out the 0.4 s around each shift. Not measured
+on game audio yet. Expect wheelspin and jumps (revs flaring with no shift) to give false shifts on
+loose surfaces, and slow H-pattern shifts to be missed: the thresholds are in `SHIFT`.
+
+Each shift's drop is measured to about 2%, and each pair of gears has its own (×0.69 for 1→2,
+×0.83 for 4→5 in the simulation). That is the way to an absolute gear that corrects a miscount, once
+a car's ratios are known or learned; it is not built.
+
 ## Car recognition
 
 With **car → Auto · recognise**, the page names the car from its sound and uses that car's cylinder
@@ -361,7 +396,9 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Settings
 
 - **Cylinders** (top bar): see above. **Idle / redline**: the search band (also sent to SimHub).
-- **Simulated driving**: idle then four pulls, or rally (pulls and shifts, never idle).
+- **Simulated driving**: idle then four pulls, rally (pulls and shifts, never idle), or stage (standing
+  start, gears 1–5 up and down, stop; the tach then also shows the true gear).
+- **Gears**: number of forward gears; the counted gear never goes above it.
 - **Chunk**: how often detection runs (2.7 / 5.3 / 11 ms). Smaller = less waiting, more CPU.
 - **Predict ahead**: compensates the half-window delay. **Adaptive pitch window**: see above.
   **Pitch max window**: the window at idle and when nothing is locked.
@@ -374,9 +411,10 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, car list, car recognition, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
+npm test          # packet layout, car list, car recognition, shifts and gear, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
+npm run bench -- --shifts # gear shifts and gear on the simulated stage
 ```
 
 ## Layout
@@ -390,7 +428,8 @@ public/detect-worker.js      runs the pipeline on each chunk, skips backlog
 public/pipeline.js           both detectors, adaptive window, trackers, prediction (shared with bench/tests)
 public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js (pitch-detection wrapper),
                              cylinders.js (cylinder count from the engine-cycle tones),
-                             car-id.js (car recognition from the tone: snapshots, profiles, matcher)
+                             car-id.js (car recognition from the tone: snapshots, profiles, matcher),
+                             shifts.js (gear shifts from the rpm's steps, counted gear)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
 public/lag.js                measured-lag estimator
 public/ring.js               ring buffer

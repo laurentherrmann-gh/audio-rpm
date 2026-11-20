@@ -82,6 +82,51 @@ export function makeNoIdleSchedule({ redline = 7500 } = {}) {
     [8.4, redline * 0.9], [9, redline * 0.45], [9.6, redline * 0.55], [10.6, 2500]];
 }
 
+// Gearbox of the simulated stage drive: engine revs per unit of road speed, gears 1–5.
+// An upshift from gear g multiplies the revs by STAGE_RATIOS[g] / STAGE_RATIOS[g − 1] (0.69 … 0.83).
+export const STAGE_RATIOS = [3.2, 2.2, 1.65, 1.3, 1.08];
+
+/**
+ * A stage with a gearbox, for testing shift and gear detection: standing start, up through the
+ * gears to 5th, braking with downshifts to 2nd, up to 4th, down to 1st, stop. Points are
+ * [seconds, rpm, gear]; shifts take 0.1 s (up) and 0.08 s (down).
+ */
+export function makeStageSchedule({ idleRpm = 900, redline = 7500 } = {}) {
+  const top = redline * 0.96, pts = [[0, idleRpm, 1]];
+  let t = 0, rpm = idleRpm, gear = 1;
+  const add = (dt, r, g = gear) => { t += dt; rpm = r; gear = g; pts.push([t, rpm, gear]); };
+  const pull = (to = top) => add(0.9 + 0.5 * gear, to);
+  const up = () => add(0.1, (rpm * STAGE_RATIOS[gear]) / STAGE_RATIOS[gear - 1], gear + 1);
+  const brake = () => add(0.6, redline * 0.6);
+  const down = () => add(0.08, (rpm * STAGE_RATIOS[gear - 2]) / STAGE_RATIOS[gear - 1], gear - 1);
+  add(1.5, idleRpm);         // on the start line
+  add(0.3, redline * 0.5);   // launch
+  pull(); up(); pull(); up(); pull(); up(); pull(); up(); pull(redline * 0.85); // 1st → 5th
+  brake(); down(); brake(); down(); brake(); down(); brake();                   // → 2nd
+  pull(); up(); pull(); up(); pull(redline * 0.9);                              // → 4th
+  brake(); down(); brake(); down(); brake(); down();                            // → 1st
+  add(1.2, idleRpm);         // stop
+  add(1.0, idleRpm);
+  return pts;
+}
+
+/** Gear at time t of a schedule with gears (looping); null for schedules without. */
+export function gearAt(schedule, t) {
+  const T = scheduleDuration(schedule), u = ((t % T) + T) % T;
+  for (const p of schedule) if (u <= p[0]) return p[2] ?? null;
+  return schedule[schedule.length - 1][2] ?? null;
+}
+
+/** The shifts of one loop of a schedule with gears: [{ t, tEnd, from, to, ratio }]. */
+export function shiftsIn(schedule) {
+  const out = [];
+  for (let i = 1; i < schedule.length; i++) {
+    const a = schedule[i - 1], b = schedule[i];
+    if (a[2] != null && b[2] !== a[2]) out.push({ t: a[0], tEnd: b[0], from: a[2], to: b[2], ratio: b[1] / a[1] });
+  }
+  return out;
+}
+
 /** Constant rpm schedule, for deterministic tests. */
 export function constantSchedule(rpm, seconds = 10) {
   return [[0, rpm], [seconds, rpm]];

@@ -7,6 +7,7 @@ import { loadProfiles } from './detectors/car-id.js';
 
 let pipe = null, audioPort = null;
 let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
+let shiftSeen = null; // time of the last shift written to a recording
 let rec = null; // { need, got, chunks: Float32Array[], rows: [] } while recording; stops at need or on 'record-stop'
 
 self.onmessage = e => {
@@ -62,11 +63,13 @@ function run() {
   }
   const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
   peakRms = 0;
-  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl, car: r.car });
+  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd, cyl: r.cyl, car: r.car, gear: r.gear });
   if (rec) {
     const f = v => (v == null ? '' : Math.round(v));
     rec.rows.push([lastT.toFixed(4), f(r.pd?.raw), f(r.pd?.rpm), r.pd?.f0 ? r.pd.f0.toFixed(2) : '', f(r.gyro?.raw), f(r.gyro?.rpm),
-      r.gyro?.f0 ? r.gyro.f0.toFixed(2) : '', r.cyl.n, r.cyl.locked ?? '', levelDb.toFixed(1)].join(','));
+      r.gyro?.f0 ? r.gyro.f0.toFixed(2) : '', r.cyl.n, r.cyl.locked ?? '', levelDb.toFixed(1),
+      r.gear.gear ?? '', ...(r.gear.last && r.gear.last.t !== shiftSeen ? [r.gear.last.dir, r.gear.last.ratio.toFixed(3)] : ['', ''])].join(','));
+    shiftSeen = r.gear.last?.t ?? null;
     if (rec.got >= rec.need) finishRecording();
   }
 }

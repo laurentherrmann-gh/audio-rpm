@@ -19,11 +19,15 @@
 // Car recognition (`car: 'auto'`, with profiles given to setCars): detectors/car-id.js recognises
 // the car from its tone. In auto cylinder mode, a recognised car's cylinder count is used as soon
 // as it is known, ahead of the count from the cycle tones (which carries on only until then).
+//
+// Gear: detectors/shifts.js finds gear shifts in pitch-detection's tracked rpm (the faster of the two
+// detectors) and counts the gear from them (`maxGear` gears; unknown until the car has been standing).
 import rfft from 'fourier-transform';
 import { analyseSpectrum } from './detectors/gyroball-core.js';
 import { detectPitch } from './detectors/pd-core.js';
 import { detectCylinders } from './detectors/cylinders.js';
 import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.js';
+import { ShiftDetector } from './detectors/shifts.js';
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -45,7 +49,7 @@ const CYL_LOCK = { votes: 3, share: 0.6 };
 const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 
 export const DEFAULTS = Object.freeze({
-  cylinders: 4, car: 'off', autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  cylinders: 4, car: 'off', maxGear: 6, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto' },
   pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012 },
@@ -79,6 +83,7 @@ export class Pipeline {
     this.carCyl = null; // cylinder count of the recognised car
     this.carEval = -Infinity;
     this.trackers = { gyro: new Tracker(), pd: new Tracker() };
+    this.shifts = new ShiftDetector();
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -93,12 +98,14 @@ export class Pipeline {
       tr.set({ tau: t.tau, maxAccel: t.accel, maxVel: t.accel, reacquire: t.reacq, lag: 0.01 });
     }
     const c = this.cfg;
+    this.shifts.set({ idle: c.idle, redline: c.redline, maxGear: c.maxGear });
     if (prev.cylinders !== c.cylinders || String(prev.autoCandidates) !== String(c.autoCandidates)) this.cyl = this.freshCyl();
     if (prev.car !== c.car) this.forgetCar();
     if (prev.cylinders !== c.cylinders || prev.scale.gyro !== c.scale.gyro || prev.scale.pd !== c.scale.pd) this.reset();
   }
 
-  reset() { this.trackers.gyro.reset(); this.trackers.pd.reset(); }
+  /** The rpm scale changed: restart the trackers, and don't take the jump for a gear shift. */
+  reset() { this.trackers.gyro.reset(); this.trackers.pd.reset(); this.shifts.clear(); }
 
   /** Car profiles ({ sigma2, cars }, from tools/cars.js), or null for none. */
   setCars(profiles) {
@@ -297,7 +304,7 @@ export class Pipeline {
     this.stepCar(tEnd);
     const gyro = this.cfg.gyro.enabled ? this.stepGyro(tEnd) : null;
     const pd = this.cfg.pd.enabled ? this.stepPd(tEnd) : null;
-    return { gyro, pd, cyl: this.cylState(), car: this.carState() };
+    return { gyro, pd, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
   }
 
   buf(key, n, Type = Float32Array) {
@@ -371,6 +378,7 @@ export class Pipeline {
     const res = this.finish('pd', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `clarity ${r.clarity.toFixed(2)}` : '', winMs: (N / fs) * 1000,
     });
+    this.shifts.push(tEnd, res.rpm != null && !res.coast ? res.rpm : null);
     if (this.cfg.cylinders === 'auto' && tr.x !== null && !res.coast) {
       this.noteRevs(tEnd - N / fs / 2, firingHz(tr.x / this.cfg.scale.pd, this.cylinders()));
     }
