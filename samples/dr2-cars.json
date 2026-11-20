@@ -1,0 +1,581 @@
+{
+ "source": "https://www.youtube.com/watch?v=zw2Zxv66eWo",
+ "title": "DiRT Rally 2.0 All Cars Sounds",
+ "note": "Segments from the video's chapter list. Where one chapter lists two or three cars, its time is split evenly between them (an assumption). cylinders = the real car's engine (null = not known for the game's model; excluded from scoring).",
+ "cars": [
+  {
+   "start": 0,
+   "end": 40,
+   "car": "DS Automobiles DS 21",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 40,
+   "end": 80,
+   "car": "Lancia Fulvia HF",
+   "cylinders": 4,
+   "layout": "narrow V4"
+  },
+  {
+   "start": 80,
+   "end": 120,
+   "car": "Mini Cooper S",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 120,
+   "end": 160,
+   "car": "Peugeot 205 GTI",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 160,
+   "end": 200,
+   "car": "Volkswagen Golf GTI 16v",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 200,
+   "end": 240,
+   "car": "Alpine Renault A110 1600 S",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 240,
+   "end": 280,
+   "car": "Fiat 131 Abarth",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 280,
+   "end": 320,
+   "car": "Ford Escort Mk II",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 320,
+   "end": 360,
+   "car": "Opel Kadett C GT/E",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 360,
+   "end": 400,
+   "car": "BMW E30 M3 Evo Rally",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 400,
+   "end": 440,
+   "car": "Datsun 240Z",
+   "cylinders": 6,
+   "layout": "inline-6"
+  },
+  {
+   "start": 440,
+   "end": 480,
+   "car": "Ford Sierra Cosworth RS500",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 480,
+   "end": 520,
+   "car": "Lancia Stratos",
+   "cylinders": 6,
+   "layout": "V6"
+  },
+  {
+   "start": 520,
+   "end": 560,
+   "car": "Opel Ascona 400",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 560,
+   "end": 600,
+   "car": "Renault 5 Turbo",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 600,
+   "end": 640,
+   "car": "BMW M1 Procar",
+   "cylinders": 6,
+   "layout": "inline-6"
+  },
+  {
+   "start": 640,
+   "end": 680,
+   "car": "Lancia 037 Evo 2",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 680,
+   "end": 720,
+   "car": "Opel Manta 400",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 720,
+   "end": 760,
+   "car": "Porsche 911 SC RS",
+   "cylinders": 6,
+   "layout": "flat-6"
+  },
+  {
+   "start": 760,
+   "end": 800,
+   "car": "Audi Sport quattro S1 E2",
+   "cylinders": 5,
+   "layout": "inline-5"
+  },
+  {
+   "start": 800,
+   "end": 840,
+   "car": "Ford RS200",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 840,
+   "end": 880,
+   "car": "Lancia Delta S4",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 880,
+   "end": 920,
+   "car": "MG Metro 6R4",
+   "cylinders": 6,
+   "layout": "V6"
+  },
+  {
+   "start": 920,
+   "end": 960,
+   "car": "Peugeot 205 T16 Evo 2",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 960,
+   "end": 1000,
+   "car": "Ford Escort RS Cosworth",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1000,
+   "end": 1040,
+   "car": "Lancia Delta HF Integrale",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1040,
+   "end": 1080,
+   "car": "Mitsubishi Lancer Evolution VI",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1080,
+   "end": 1120,
+   "car": "Subaru Legacy RS",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 1120,
+   "end": 1160,
+   "car": "Subaru Impreza 1995",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 1160,
+   "end": 1200,
+   "car": "Peugeot 306 Maxi",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1200,
+   "end": 1240,
+   "car": "SEAT Ibiza Kitcar",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1240,
+   "end": 1280,
+   "car": "Volkswagen Golf Kitcar",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1280,
+   "end": 1320,
+   "car": "Ford Fiesta R2",
+   "cylinders": null,
+   "layout": "3 or 4 (game model unknown)"
+  },
+  {
+   "start": 1320,
+   "end": 1360,
+   "car": "Opel Adam R2",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1360,
+   "end": 1400,
+   "car": "Peugeot 208 R2",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1400,
+   "end": 1440,
+   "car": "Mitsubishi Lancer Evolution X",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1440,
+   "end": 1480,
+   "car": "Subaru WRX STI NR4",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 1480,
+   "end": 1520,
+   "car": "Citroën C3 R5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1520,
+   "end": 1560,
+   "car": "Ford Fiesta R5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1560,
+   "end": 1600,
+   "car": "Ford Fiesta R5 MKII",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1600,
+   "end": 1640,
+   "car": "Mitsubishi Space Star R5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1640,
+   "end": 1680,
+   "car": "Peugeot 208 R5 T16",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1680,
+   "end": 1720,
+   "car": "ŠKODA Fabia R5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1720,
+   "end": 1760,
+   "car": "Volkswagen Polo GTI R5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1760,
+   "end": 1800,
+   "car": "Citroën C4 Rally",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1800,
+   "end": 1840,
+   "car": "Ford Focus RS Rally 2001",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1840,
+   "end": 1880,
+   "car": "Ford Focus RS Rally 2007",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1880,
+   "end": 1920,
+   "car": "Peugeot 206 Rally",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1920,
+   "end": 1960,
+   "car": "Škoda Fabia Rally 2005",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 1960,
+   "end": 2000,
+   "car": "Subaru Impreza S4 Rally",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 2000,
+   "end": 2040,
+   "car": "Subaru Impreza 2001",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 2040,
+   "end": 2080,
+   "car": "Subaru Impreza",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 2080,
+   "end": 2120,
+   "car": "Aston Martin V8 Vantage GT4",
+   "cylinders": 8,
+   "layout": "V8"
+  },
+  {
+   "start": 2120,
+   "end": 2160,
+   "car": "BMW M2 Competition",
+   "cylinders": 6,
+   "layout": "inline-6"
+  },
+  {
+   "start": 2160,
+   "end": 2200,
+   "car": "Chevrolet Camaro GT4.R",
+   "cylinders": 8,
+   "layout": "V8"
+  },
+  {
+   "start": 2200,
+   "end": 2240,
+   "car": "Ford Mustang GT4",
+   "cylinders": 8,
+   "layout": "V8"
+  },
+  {
+   "start": 2240,
+   "end": 2280,
+   "car": "Porsche 911 RGT Rally Spec",
+   "cylinders": 6,
+   "layout": "flat-6"
+  },
+  {
+   "start": 2280,
+   "end": 2320,
+   "car": "Ford RS200 Evolution (RX)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2320,
+   "end": 2360,
+   "car": "Lancia Delta S4 Rallycross",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2360,
+   "end": 2400,
+   "car": "MG Metro 6R4 Rallycross",
+   "cylinders": 6,
+   "layout": "V6"
+  },
+  {
+   "start": 2400,
+   "end": 2440,
+   "car": "Peugeot 205 T16 Rallycross",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2440,
+   "end": 2480,
+   "car": "Opel Corsa Super 1600",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2480,
+   "end": 2520,
+   "car": "Renault Clio R.S. S1600",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2520,
+   "end": 2560,
+   "car": "Volkswagen Polo S1600",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2560,
+   "end": 2600,
+   "car": "Audi S1 EKS RX quattro",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2600,
+   "end": 2640,
+   "car": "Audi S1 EKS RX quattro (2019)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2640,
+   "end": 2680,
+   "car": "Ford Fiesta Rallycross (Mk7)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2680,
+   "end": 2720,
+   "car": "Ford Fiesta Rallycross (STARD)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2720,
+   "end": 2760,
+   "car": "Ford Fiesta Rallycross (Mk8)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2760,
+   "end": 2800,
+   "car": "Ford Fiesta Rallycross (Mk8, 2019)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2800,
+   "end": 2840,
+   "car": "Ford Fiesta RXS Evo 5",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2840,
+   "end": 2880,
+   "car": "Mini Cooper SX1",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2880,
+   "end": 2920,
+   "car": "Peugeot 208 WRX",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2920,
+   "end": 2960,
+   "car": "Peugeot 208 WRX (2019)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 2960,
+   "end": 3000,
+   "car": "Renault Clio R.S. RX",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3000,
+   "end": 3040,
+   "car": "Renault Megane RS RX",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3040,
+   "end": 3080,
+   "car": "Renault Megane RS RX (2019)",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3080,
+   "end": 3120,
+   "car": "Seat Ibiza RX",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3120,
+   "end": 3160,
+   "car": "Subaru WRX STI RX",
+   "cylinders": 4,
+   "layout": "flat-4"
+  },
+  {
+   "start": 3160,
+   "end": 3200,
+   "car": "Volkswagen Polo R Supercar",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3200,
+   "end": 3240,
+   "car": "Ford Fiesta OMSE SuperCar Lite",
+   "cylinders": 4,
+   "layout": "inline-4"
+  },
+  {
+   "start": 3240,
+   "end": 3280,
+   "car": "Speedcar Xtrem",
+   "cylinders": null,
+   "layout": "unknown"
+  }
+ ]
+}

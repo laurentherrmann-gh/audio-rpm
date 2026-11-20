@@ -95,6 +95,27 @@ npm run analyze -- clip.wav --cylinders auto-any --idle 1000 --redline 8500 --ev
 ffmpeg -i clip.m4a -ac 1 -ar 48000 clip.wav                        # other formats: convert first
 ```
 
+### DiRT Rally 2.0 car sounds (labelled test set)
+
+The video "DiRT Rally 2.0 All Cars Sounds" has one 40-second chapter per car (82 cars). Each car's
+real cylinder count is in `samples/dr2-cars.json` (null where unknown: the Ford Fiesta R2 may be the
+3-cylinder EcoBoost version, and the Speedcar Xtrem; those two are not scored). That makes it labelled
+game audio to measure cylinder auto-detection against.
+
+```sh
+brew install yt-dlp ffmpeg
+npm run fetch-dr2       # downloads the video's audio once, cuts samples/dr2/NN-car.wav per car
+npm run eval-dr2        # auto-detection per car vs its real cylinder count → samples/dr2/results.md
+npm run eval-dr2 -- --only 11,20,53                  # just some cars (manifest numbers)
+npm run fetch-dr2 -- --source audio.m4a              # cut from an audio file you already have
+```
+
+YouTube's terms only allow downloading through YouTube's own features, so using yt-dlp is your call;
+the alternative is to play the video through BlackHole and use **● Rec**. The audio stays on your Mac
+(`samples/dr2/` is git-ignored). `results.md` has, per car: final count (✓/✗), time to first lock,
+share of time locked right / wrong, how often each detector had a reading, and how often
+pitch-detection and gyroball agree within 5% (there is no rpm truth in these recordings).
+
 ### Measuring the real capture path (loopback test)
 
 The simulated engine runs inside the page, so its measured lag excludes the sound card. To include
@@ -294,7 +315,9 @@ public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
 public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, bench)
 public/engine-sim.js         in-browser simulated engine
-tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV)
+tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV),
+                             fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), lib/audio.js (WAV + replay)
+samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout
 ```
 
 ## Next: POC 2
