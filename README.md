@@ -122,7 +122,9 @@ npm run fetch-dr2 -- --source dr2.wav --offset auto                  # finds the
 npm run eval-dr2
 ```
 
-`--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
+The Mac must play into BlackHole while ffmpeg records it: in System Settings > Sound > Output choose
+BlackHole 2ch, or a Multi-Output Device with BlackHole and your speakers to hear it too. fetch-dr2 stops
+on a silent recording, and eval-dr2 marks silent files. `--offset auto` takes the end of the recording's leading silence as the video's 0:00 (or give
 `--offset 2.5` in seconds). The video is 55 minutes; it must play at **1× without ads**, since ads or
 pauses shift every chapter after them. For one car only, use **● Rec** in the page over its chapter and
 `npm run eval-dr2 -- --file ~/Downloads/audio-rpm-….wav --car 20`.

@@ -27,6 +27,7 @@ const cfg = {
   cylinders: 'auto', autoCandidates: cylArg === 'auto-any' ? CYLINDERS : RALLY_CYLINDERS,
 };
 const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+const SILENT_DB = -60; // a file whose loudest sample is below this has no sound in it
 
 const results = [];
 const todo = opt('file')
@@ -37,6 +38,9 @@ console.log(`Evaluating ${todo.length} car(s), cylinders ${cylArg}, idle ${cfg.i
 
 for (const { car, i, file } of todo) {
   const { fs, samples } = readWav(file);
+  let peak = 0;
+  for (let k = 0; k < samples.length; k++) peak = Math.max(peak, Math.abs(samples[k]));
+  const peakDb = Math.round(20 * Math.log10(Math.max(peak, 1e-9)));
   let steps = 0, lockedRight = 0, lockedWrong = 0, firstLock = null, firstLockN = null;
   let pdOk = 0, gyOk = 0, both = 0, agree = 0;
   const pdRpms = [];
@@ -54,6 +58,7 @@ for (const { car, i, file } of todo) {
   const final = pipe.cyl.locked;
   const res = {
     n: i + 1, car: car.car, layout: car.layout, truth: car.cylinders, seconds: +(samples.length / fs).toFixed(1),
+    peakDb, silent: peakDb < SILENT_DB,
     final, correct: car.cylinders ? final === car.cylinders : null,
     firstLock: firstLock === null ? null : +firstLock.toFixed(2), firstLockN,
     timeLockedRight: pct(lockedRight, steps), timeLockedWrong: pct(lockedWrong, steps),
@@ -64,7 +69,8 @@ for (const { car, i, file } of todo) {
   results.push(res);
   const mark = res.correct === null ? '·' : res.correct ? '✓' : '✗';
   console.log(`${String(res.n).padStart(2)} ${mark} ${car.car.padEnd(36)} ${String(car.cylinders ?? '?').padStart(2)} cyl → ${final === null ? 'none' : cylName(final)}`.padEnd(66) +
-    ` first lock ${res.firstLock ?? '—'} s · right ${res.timeLockedRight}% wrong ${res.timeLockedWrong}% · readings pitch ${res.pitchReadings}% gyro ${res.gyroReadings}% · agree ${res.agree}%`);
+    (res.silent ? ` SILENT (peak ${peakDb} dB)` :
+    ` first lock ${res.firstLock ?? '—'} s · right ${res.timeLockedRight}% wrong ${res.timeLockedWrong}% · readings pitch ${res.pitchReadings}% gyro ${res.gyroReadings}% · agree ${res.agree}%`));
 }
 
 // summary
@@ -77,10 +83,11 @@ for (const r of scored) {
 const lines = [
   `# DiRT Rally 2.0 car sounds: cylinder auto-detection (${cylArg}), ${new Date().toISOString().slice(0, 10)}`, '',
   `${scored.length} scored cars: **${scored.filter(r => r.correct).length} right**, ${scored.filter(r => r.final !== null && !r.correct).length} wrong, ${scored.filter(r => r.final === null).length} no count.`, '',
+  ...(results.some(r => r.silent) ? [`**${results.filter(r => r.silent).length} file(s) are silent**: the recording had no sound (the Mac was not playing into BlackHole).`, ''] : []),
   '| cylinders | cars | right | wrong | no count |', '|---|---|---|---|---|',
   ...Object.entries(by).map(([k, b]) => `| ${k} | ${b.cars} | ${b.right} | ${b.wrong} | ${b.none} |`), '',
-  '| # | car | layout | truth | final | first lock | time right / wrong | pitch / gyro readings | agree |', '|---|---|---|---|---|---|---|---|---|',
-  ...results.map(r => `| ${r.n} | ${r.car} | ${r.layout} | ${r.truth ?? '?'} | ${r.final ?? '—'} ${r.correct === null ? '' : r.correct ? '✓' : '✗'} | ${r.firstLock ?? '—'} s | ${r.timeLockedRight}% / ${r.timeLockedWrong}% | ${r.pitchReadings}% / ${r.gyroReadings}% | ${r.agree}% |`),
+  '| # | car | layout | truth | final | first lock | time right / wrong | pitch / gyro readings | agree | peak |', '|---|---|---|---|---|---|---|---|---|---|',
+  ...results.map(r => `| ${r.n} | ${r.car} | ${r.layout} | ${r.truth ?? '?'} | ${r.final ?? '—'} ${r.correct === null ? '' : r.correct ? '✓' : '✗'} | ${r.firstLock ?? '—'} s | ${r.timeLockedRight}% / ${r.timeLockedWrong}% | ${r.pitchReadings}% / ${r.gyroReadings}% | ${r.agree}% | ${r.silent ? `**silent** ` : ''}${r.peakDb} dB |`),
 ];
 mkdirSync(dir, { recursive: true });
 writeFileSync(path.join(dir, 'results.md'), lines.join('\n') + '\n');

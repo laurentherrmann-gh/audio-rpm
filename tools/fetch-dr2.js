@@ -30,14 +30,30 @@ const run = (cmd, args) => {
 export const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 export const fileFor = (car, i) => `${String(i + 1).padStart(2, '0')}-${slug(car.car)}.wav`;
 
-/** Time (s) at which the sound starts: end of the leading silence, via ffmpeg silencedetect. */
+const SILENT_DB = -60; // a recording whose loudest moment is below this has no sound in it
+const SEARCH_S = 120;  // --offset auto looks for the start of the sound in the first 2 minutes
+
+/** Time (s) at which the sound starts: end of the leading silence, via ffmpeg silencedetect.
+ *  null when the first SEARCH_S seconds are all silence. */
 function soundStart(file) {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-t', '120', '-i', file, '-af', 'silencedetect=noise=-50dB:d=0.3', '-f', 'null', '-'], { encoding: 'utf8' });
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-t', String(SEARCH_S), '-i', file, '-af', 'silencedetect=noise=-50dB:d=0.3', '-f', 'null', '-'], { encoding: 'utf8' });
   const log = r.stderr || '';
   const first = log.match(/silence_start: ([\d.]+)/), end = log.match(/silence_end: ([\d.]+)/);
-  if (!first || Number(first[1]) > 0.05 || !end) return 0; // no leading silence
+  if (!first || Number(first[1]) > 0.05) return 0; // no leading silence
+  if (!end || Number(end[1]) >= SEARCH_S - 0.5) return null; // silent until the end of the search window
   return Number(end[1]);
 }
+
+/** Loudest and mean level of a whole file, in dB (ffmpeg volumedetect). */
+function loudness(file) {
+  const log = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' }).stderr || '';
+  const num = re => { const m = log.match(re); return m ? Number(m[1]) : -Infinity; };
+  return { max: num(/max_volume: (-?[\d.]+|-inf) dB/), mean: num(/mean_volume: (-?[\d.]+|-inf) dB/) };
+}
+
+const SILENT_HELP = `The recording has no sound in it. ffmpeg recorded BlackHole, but the Mac was not playing into
+BlackHole. In System Settings > Sound > Output, choose BlackHole 2ch (you won't hear it), or a
+Multi-Output Device that includes BlackHole 2ch and your speakers (Audio MIDI Setup), then record again.`;
 
 function main() {
   if (!has('ffmpeg', '-version')) { console.error('ffmpeg not found: brew install ffmpeg'); process.exit(1); }
@@ -55,9 +71,19 @@ function main() {
     } else console.log(`Using the audio already downloaded: ${path.relative(ROOT, source)}`);
   }
 
+  const level = loudness(source);
+  if (level.max < SILENT_DB) {
+    console.error(`${path.basename(source)}: loudest moment ${level.max} dB.\n${SILENT_HELP}`);
+    process.exit(1);
+  }
+
   let offset = 0;
   if (opt('offset') === 'auto') {
     offset = soundStart(source);
+    if (offset === null) {
+      console.error(`No sound in the first ${SEARCH_S / 60} minutes of ${path.basename(source)}: start the video sooner after ffmpeg, or give --offset <seconds>.`);
+      process.exit(1);
+    }
     console.log(`Sound starts at ${offset.toFixed(2)} s in ${path.basename(source)}: taken as the video's 0:00.`);
   } else if (opt('offset')) offset = Number(opt('offset'));
 
