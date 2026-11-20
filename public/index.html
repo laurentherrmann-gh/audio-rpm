@@ -3,179 +3,158 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>audio-bridge · POC 1</title>
+<title>audio-bridge</title>
 <link rel="icon" href="data:,">
 <style>
   :root { --bg:#101418; --panel:#1a2027; --text:#e6edf3; --dim:#8b98a5; --grid:#2a333d;
           --gyro:#4cd964; --pd:#ff9f43; --truth:#c9d1d9; --warn:#ffb020; --bad:#ff6b6b; --accent:#3fb9ff; }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 -apple-system, system-ui, sans-serif; }
-  main { max-width: 1040px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
-  h1 small { color: var(--dim); font-weight: 400; }
-  h2 { font-size: 13px; color: var(--dim); font-weight: 600; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; }
-  .panel { background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
-  .grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; margin-bottom: 12px; }
-  .cards { display: grid; grid-template-rows: auto auto; gap: 12px; }
-  .card { background: var(--panel); border-radius: 12px; padding: 12px 14px; border: 2px solid transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.35 -apple-system, system-ui, sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 10px 14px; }
+  .panel { background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+  .bar h1 { font-size: 15px; margin: 0 6px 0 0; font-weight: 700; }
+  .spacer { flex: 1; }
+  button { background: var(--accent); color: #00131f; border: 0; border-radius: 7px; padding: 6px 12px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #2b3540; color: var(--text); }
+  label { font-size: 12px; color: var(--dim); display: flex; flex-direction: column; gap: 3px; }
+  label.inline { flex-direction: row; align-items: center; gap: 5px; font-size: 13px; }
+  select, input[type=number] { background: #0e1216; color: var(--text); border: 1px solid var(--grid); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+  input[type=number] { width: 84px; }
+  canvas { width: 100%; display: block; border-radius: 8px; background: #0b0f13; }
+  #msg { font-size: 13px; min-height: 18px; margin: 6px 2px; color: var(--warn); }
+  #msg.error { color: var(--bad); font-weight: 600; }
+  .status { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .status b { color: var(--text); font-weight: 600; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--bad); margin-right: 3px; }
+  .dot.on { background: var(--gyro); }
+  .meter { width: 90px; height: 8px; border-radius: 4px; background: #0b0f13; overflow: hidden; display: inline-block; vertical-align: middle; }
+  .meter span { display: block; height: 100%; width: 0; background: var(--gyro); }
+
+  .layout { display: grid; grid-template-columns: minmax(340px, 430px) 1fr; gap: 10px; }
+  .col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .card { background: var(--panel); border-radius: 10px; padding: 8px 10px; border: 2px solid transparent; min-width: 0; }
   .card.selected { border-color: currentColor; }
   .card.gyro { color: var(--gyro); } .card.pd { color: var(--pd); }
-  .card .name { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
-  .card .rpm { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; color: var(--text); }
+  .card .name { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+  .card .rpm { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--text); }
   .card .rpm.off { color: var(--dim); }
-  .card .sub { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
-  button { background: var(--accent); color: #00131f; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 15px; font-weight: 600; cursor: pointer; }
-  button.secondary { background: #2b3540; color: var(--text); }
-  label { font-size: 13px; color: var(--dim); display: flex; flex-direction: column; gap: 4px; }
-  label.inline { flex-direction: row; align-items: center; gap: 6px; }
-  select, input[type=number] { background: #0e1216; color: var(--text); border: 1px solid var(--grid); border-radius: 6px; padding: 6px; font-size: 14px; }
-  input[type=number] { width: 90px; }
-  canvas { width: 100%; display: block; border-radius: 8px; background: #0b0f13; }
-  #msg { color: var(--warn); font-size: 13px; min-height: 18px; margin-top: 8px; }
-  .status { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
-  .status b { color: var(--text); font-weight: 600; }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--bad); margin-right: 4px; }
-  .dot.on { background: var(--gyro); }
-  .legend span { margin-right: 14px; font-size: 13px; }
-  .legend i { display:inline-block; width:14px; height:3px; vertical-align: middle; margin-right: 5px; }
-  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
-  table.lat { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-  table.lat th, table.lat td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  .card .sub { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .legend { font-size: 12px; color: var(--dim); display: flex; gap: 12px; align-items: center; margin-bottom: 5px; flex-wrap: wrap; }
+  .legend i { display:inline-block; width:12px; height:3px; vertical-align: middle; margin-right: 4px; }
+  table.lat { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.lat th, table.lat td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
   table.lat th { color: var(--dim); font-weight: 500; }
   table.lat th:first-child, table.lat td:first-child { text-align: left; }
-  table.lat td.big { font-size: 16px; font-weight: 700; }
-  .bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: #0b0f13; margin: 4px 0 10px; }
-  .bar span { display: block; height: 100%; }
-  .keys span { font-size: 12px; color: var(--dim); margin-right: 12px; }
-  .keys i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
-  .neg { color: var(--gyro); }
+  table.lat td.big { font-size: 14px; font-weight: 700; }
+  .latbar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0f13; margin-top: 4px; }
+  .latbar span { display: block; height: 100%; }
+  h2 { font-size: 11px; color: var(--dim); font-weight: 600; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+
+  details.settings { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>audio-bridge <small>· engine audio → RPM (gyroball-rpm vs pitch-detection) → tach / SimHub</small></h1>
-
-  <div class="panel">
-    <div class="row">
-      <label>Audio source
-        <select id="source"><option value="sim">Simulated engine (known RPM)</option></select>
-      </label>
-      <button id="start">Start</button>
-      <button id="refresh" class="secondary" title="Ask for mic permission and list input devices">List inputs</button>
-      <label class="inline"><input type="checkbox" id="hear"> hear simulation</label>
-      <label class="inline" title="Plays the simulated engine through the Mac's output and analyses the selected input (BlackHole). Measures the real capture path."><input type="checkbox" id="loopback"> loopback lag test (input sources)</label>
-    </div>
-    <div id="msg"></div>
+  <div class="panel bar">
+    <h1>audio-bridge</h1>
+    <select id="source" title="Audio source"><option value="sim">Simulated engine (known RPM)</option></select>
+    <button id="start">Start</button>
+    <button id="refresh" class="secondary" title="Ask for mic permission and list input devices">List inputs</button>
+    <label class="inline"><input type="checkbox" id="hear"> hear sim</label>
+    <label class="inline" title="Plays the simulated engine through the Mac's output and analyses the selected input (BlackHole). Measures the real capture path."><input type="checkbox" id="loopback"> loopback test</label>
+    <span class="spacer"></span>
+    <span class="status" title="Level of the audio reaching the detectors">input <span class="meter"><span id="level-bar"></span></span> <b id="level">—</b></span>
+    <span class="status" title="Detector updates per second"><b id="rate">0</b>/s</span>
+    <label class="inline" title="Send the RPM on the tach to SimHub as DiRT Rally 2.0 UDP telemetry"><input type="checkbox" id="udp"> SimHub UDP</label>
+    <span class="status"><span class="dot" id="ws-dot"></span><span id="ws-state">server…</span> <span id="udp-state"></span><span id="udp-err" style="color:var(--bad)"></span></span>
   </div>
+  <div id="msg"></div>
 
-  <div class="grid2">
-    <div class="panel" style="margin:0">
-      <canvas id="tach" height="330"></canvas>
-    </div>
-    <div class="cards">
-      <div class="card gyro" id="card-gyro">
-        <div class="name"><span>gyroball-rpm (spectral harmonics)</span>
-          <label class="inline"><input type="radio" name="feed" value="gyro"> on tach</label></div>
-        <div class="rpm off" id="gyro-rpm">—</div>
-        <div class="sub" id="gyro-sub">no signal</div>
-        <div class="sub" id="gyro-err"></div>
+  <div class="layout">
+    <div class="col">
+      <div class="panel" style="padding:8px"><canvas id="tach" data-h="300"></canvas></div>
+      <div class="cards">
+        <div class="card pd" id="card-pd">
+          <div class="name"><span>pitch-detection (<span id="pd-algo-name">yin</span>)</span>
+            <label class="inline"><input type="radio" name="feed" value="pd" checked> tach</label></div>
+          <div class="rpm off" id="pd-rpm">—</div>
+          <div class="sub" id="pd-sub">not running</div>
+          <div class="sub" id="pd-err"></div>
+        </div>
+        <div class="card gyro" id="card-gyro">
+          <div class="name"><span>gyroball-rpm</span>
+            <label class="inline"><input type="radio" name="feed" value="gyro"> tach</label></div>
+          <div class="rpm off" id="gyro-rpm">—</div>
+          <div class="sub" id="gyro-sub">not running</div>
+          <div class="sub" id="gyro-err"></div>
+        </div>
       </div>
-      <div class="card pd" id="card-pd">
-        <div class="name"><span>pitch-detection (<span id="pd-algo-name">yin</span>)</span>
-          <label class="inline"><input type="radio" name="feed" value="pd" checked> on tach</label></div>
-        <div class="rpm off" id="pd-rpm">—</div>
-        <div class="sub" id="pd-sub">no signal</div>
-        <div class="sub" id="pd-err"></div>
+    </div>
+
+    <div class="col">
+      <div class="panel">
+        <div class="legend">
+          <span><i style="background:var(--truth)"></i>true rpm</span>
+          <span><i style="background:var(--pd)"></i>pitch-detection</span>
+          <span><i style="background:var(--gyro)"></i>gyroball</span>
+          <span>dots = raw readings</span>
+          <span class="spacer"></span><span id="truth"></span>
+        </div>
+        <canvas id="hist" data-h="190"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>Latency: sound → RPM value</h2>
+        <table class="lat">
+          <thead><tr>
+            <th></th>
+            <th title="Input buffering reported by the browser (0 for the in-page simulation)">capture</th>
+            <th title="A reading describes the middle of its analysis window">½ window</th>
+            <th title="The tracker extrapolates each reading to the newest sample">predicted</th>
+            <th title="Detection runs once per audio chunk; a sound waits half a chunk on average">chunk wait</th>
+            <th title="Time to run the detector once: average / 95th percentile">process</th>
+            <th title="Audio thread → worker → page, including queueing">transport</th>
+            <th title="Sum of the columns to the left">= estimate</th>
+            <th title="Delay that best aligns the output with the true RPM (simulation or loopback test)">measured</th>
+          </tr></thead>
+          <tbody>
+            <tr id="lat-pd"><td style="color:var(--pd)">pitch</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="big"></td><td class="big"></td></tr>
+            <tr id="lat-gyro"><td style="color:var(--gyro)">gyroball</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="big"></td><td class="big"></td></tr>
+          </tbody>
+        </table>
+        <div class="latbar" id="bar-pd"></div>
+        <div class="latbar" id="bar-gyro"></div>
+        <div class="status" style="margin-top:4px"><span id="lat-scale"></span> <span id="lat-note"></span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Spectrum (gyroball's view) · dashed = detected firing frequency</h2>
+        <canvas id="spec" data-h="80"></canvas>
       </div>
     </div>
   </div>
 
-  <div class="panel">
-    <h2>Latency: sound → RPM value</h2>
-    <table class="lat">
-      <thead><tr>
-        <th></th>
-        <th title="Input driver buffering reported by the browser (sound card / BlackHole). 0 for the in-page simulation.">capture</th>
-        <th title="A reading describes the middle of its analysis window, so it is half a window old when computed.">½ window</th>
-        <th title="The tracker's velocity extrapolates each reading from the window centre to the newest sample.">predicted ahead</th>
-        <th title="Detection runs once per audio chunk; on average a sound waits half a chunk.">chunk wait</th>
-        <th title="Time to run the detector once (average / 95th percentile over the last 2 s).">process time</th>
-        <th title="Audio thread → worker → page, including any queueing.">transport</th>
-        <th title="Sum of the columns to the left.">= estimate</th>
-        <th title="Measured against the known true RPM (simulation or loopback test): the delay that best aligns output with truth. Needs changing revs.">measured</th>
-      </tr></thead>
-      <tbody>
-        <tr id="lat-pd"><td style="color:var(--pd)">pitch-detection</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="big"></td><td class="big"></td></tr>
-        <tr id="lat-gyro"><td style="color:var(--gyro)">gyroball</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="big"></td><td class="big"></td></tr>
-      </tbody>
-    </table>
-    <div style="margin-top:10px" class="keys">
-      <span><i style="background:#8b98a5"></i>capture</span><span><i style="background:#3fb9ff"></i>½ window − prediction</span>
-      <span><i style="background:#c792ea"></i>chunk wait</span><span><i style="background:#ffb020"></i>process</span><span><i style="background:#ff6b6b"></i>transport</span>
-      <span id="lat-scale"></span>
-    </div>
-    <div class="bar" id="bar-pd"></div>
-    <div class="bar" id="bar-gyro"></div>
-    <div class="status" id="lat-note"></div>
-  </div>
-
-  <div class="panel">
-    <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 6px">
-      <div class="legend">
-        <span><i style="background:var(--truth)"></i>true rpm</span>
-        <span><i style="background:var(--gyro)"></i>gyroball</span>
-        <span><i style="background:var(--pd)"></i>pitch-detection</span>
-        <span style="color:var(--dim)">dots = raw readings before tracking</span>
-      </div>
-      <div class="status" id="truth"></div>
-    </div>
-    <canvas id="hist" height="200"></canvas>
-  </div>
-
-  <div class="panel">
-    <div class="status" style="margin-bottom:6px">Spectrum (dB above noise floor, gyroball's view). Dashed: detected firing frequency (green gyroball, orange pitch-detection, white truth).</div>
-    <canvas id="spec" height="130"></canvas>
-  </div>
-
-  <div class="panel">
-    <h2>Settings</h2>
+  <details class="panel settings">
+    <summary>Settings</summary>
     <div class="row">
       <label>Cylinders <input type="number" id="cylinders" value="4" min="1" max="12" step="1"></label>
       <label>Idle rpm <input type="number" id="idle" value="900" min="300" max="3000" step="50"></label>
       <label>Redline rpm <input type="number" id="redline" value="7500" min="2000" max="20000" step="250"></label>
-      <label>Chunk (detect every)
+      <label>Detect every
         <select id="hop">
           <option value="128">128 samples (~2.7 ms)</option>
           <option value="256" selected>256 samples (~5.3 ms)</option>
           <option value="512">512 samples (~11 ms)</option>
         </select>
       </label>
-      <label class="inline"><input type="checkbox" id="predict" checked> predict ahead (compensate ½ window)</label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <label>gyroball FFT
-        <select id="fft">
-          <option value="4096">4096 (~85 ms)</option>
-          <option value="8192" selected>8192 (~170 ms)</option>
-          <option value="16384">16384 (~340 ms)</option>
-          <option value="32768">32768 (~680 ms, original)</option>
-        </select>
-      </label>
-      <label>gyroball variant
-        <select id="gvariant">
-          <option value="tuned" selected>Engine-tuned</option>
-          <option value="original">Original gyroball-rpm</option>
-        </select>
-      </label>
-      <label>gyroball mode
-        <select id="gmode">
-          <option value="auto" selected>Auto (harmonics)</option>
-          <option value="1">Strongest peak = 1×</option>
-          <option value="2">Strongest peak = 2×</option>
-        </select>
-      </label>
-      <label>pitch-detection algo
+      <label class="inline"><input type="checkbox" id="predict" checked> predict ahead</label>
+      <label>pitch algo
         <select id="algo">
           <option value="yin" selected>YIN</option>
           <option value="mcleod">McLeod (MPM)</option>
@@ -190,36 +169,42 @@
       </label>
       <label class="inline"><input type="checkbox" id="adaptive" checked> adaptive pitch window</label>
     </div>
-    <div class="row" style="margin-top:10px">
-      <label>Smoothing τ (s, 0 = raw) <input type="number" id="tau" value="0.05" min="0" max="2" step="0.01"></label>
+    <div class="row">
+      <label>gyroball FFT
+        <select id="fft">
+          <option value="4096">4096 (~85 ms)</option>
+          <option value="8192" selected>8192 (~170 ms)</option>
+          <option value="16384">16384 (~340 ms)</option>
+          <option value="32768">32768 (~680 ms)</option>
+        </select>
+      </label>
+      <label>gyroball variant
+        <select id="gvariant">
+          <option value="tuned" selected>Engine-tuned</option>
+          <option value="original">Original</option>
+        </select>
+      </label>
+      <label>gyroball mode
+        <select id="gmode">
+          <option value="auto" selected>Auto (harmonics)</option>
+          <option value="1">Strongest peak = 1×</option>
+          <option value="2">Strongest peak = 2×</option>
+        </select>
+      </label>
+      <label>Smoothing τ (s) <input type="number" id="tau" value="0.05" min="0" max="2" step="0.01"></label>
       <label>Max accel (rpm/s²) <input type="number" id="accel" value="40000" min="1000" max="200000" step="5000"></label>
-      <label>Re-acquire after (s) <input type="number" id="reacq" value="0.25" min="0.05" max="2" step="0.05"></label>
-      <label>Actual rpm now <input type="number" id="actual" value="3000" min="300" max="20000" step="100"></label>
-      <button class="secondary" id="cal-gyro">Calibrate gyroball</button>
-      <button class="secondary" id="cal-pd">Calibrate pitch</button>
-      <button class="secondary" id="cal-reset">Reset scales</button>
+      <label>Re-acquire (s) <input type="number" id="reacq" value="0.25" min="0.05" max="2" step="0.05"></label>
     </div>
-    <div class="status" style="margin-top:8px" id="scales"></div>
-  </div>
-
-  <div class="panel status" id="bridge">
-    <label class="inline" style="display:inline-flex; margin-right:12px"><input type="checkbox" id="udp"> <b>Send to SimHub (UDP)</b></label>
-    <span class="dot" id="ws-dot"></span>server: <b id="ws-state">connecting…</b> ·
-    target <b id="target">—</b> · <b id="pps">0</b> packets/s <span id="udp-state"></span>
-    <span id="udp-err" style="color:var(--bad)"></span>
-  </div>
-
-  <details class="panel">
-    <summary>How it works</summary>
-    <p class="status">A 4-stroke engine fires each cylinder once every two crank turns, so its loudest tone is the
-    <b>firing frequency</b> = rpm / 60 × cylinders / 2 (4 cylinders at 6,000 rpm → 200 Hz). Both detectors look for that tone
-    between idle and redline and convert it back to rpm. Exactly half or double means a wrong lock: use <b>Calibrate</b>
-    (type the in-game rpm while holding steady revs) or change the cylinder count.</p>
-    <p class="status">Detection runs off the page: an audio worklet hands every chunk of sound straight to a worker, so a hidden
-    tab or a busy page doesn't slow it. A reading describes the middle of its analysis window; with <b>predict ahead</b> the
-    tracker extrapolates it to the newest sample. The <b>adaptive pitch window</b> shrinks to ~2.5 periods of the engine tone,
-    so at high revs the window is a few milliseconds. <b>Measured</b> lag needs a known truth: use the simulated engine, or the
-    loopback test to include the real capture path (BlackHole), then subtract the output latency shown below the table.</p>
+    <div class="row">
+      <label>Actual rpm now <input type="number" id="actual" value="3000" min="300" max="20000" step="100"></label>
+      <button class="secondary" id="cal-pd">Calibrate pitch</button>
+      <button class="secondary" id="cal-gyro">Calibrate gyroball</button>
+      <button class="secondary" id="cal-reset">Reset scales</button>
+      <span class="status" id="scales"></span>
+    </div>
+    <p class="status">Firing frequency = rpm / 60 × cylinders / 2 (4 cylinders at 6,000 rpm → 200 Hz). Exactly half or double
+    means a wrong lock: Calibrate (type the in-game rpm while holding steady revs) or change the cylinder count.
+    <b>Measured</b> lag needs a known truth: the simulated engine, or the loopback test for the real capture path.</p>
   </details>
 </main>
 <script type="module" src="app.js"></script>

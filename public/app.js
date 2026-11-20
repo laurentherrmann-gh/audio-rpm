@@ -64,7 +64,9 @@ const lat = { gyro: [], pd: [] };          // per-result latency samples
 const lagPts = { gyro: [], pd: [] };       // {t: audio time at delivery, y}
 const measured = { gyro: null, pd: null };
 
-function setMsg(s) { $('msg').textContent = s || ''; }
+function setMsg(s, isError = false) { $('msg').textContent = s || ''; $('msg').classList.toggle('error', Boolean(s) && isError); }
+window.addEventListener('error', e => setMsg('Error: ' + e.message, true));
+window.addEventListener('unhandledrejection', e => setMsg('Error: ' + (e.reason?.message || e.reason), true));
 function sendConfig() { worker?.postMessage({ type: 'config', cfg: pipelineCfg() }); }
 
 // ---------- inputs ----------
@@ -131,20 +133,21 @@ async function start() {
 
     worker = new Worker('detect-worker.js', { type: 'module' });
     worker.onmessage = onResult;
-    worker.onerror = e => setMsg('Detection worker error: ' + (e.message || 'see console'));
+    worker.onerror = e => setMsg('Detection worker error: ' + (e.message || 'see the browser console'), true);
     const ch = new MessageChannel();
     worklet.port.postMessage({ port: ch.port1 }, [ch.port1]);
     worker.postMessage({ type: 'init', fs: ac.sampleRate, D, cfg: pipelineCfg(), port: ch.port2 }, [ch.port2]);
 
     history = []; lat.gyro = []; lat.pd = []; lagPts.gyro = []; lagPts.pd = [];
     measured.gyro = measured.pd = null;
+    resultsThisSecond = 0; peakLevel = -120; silentSince = 0;
     running = true;
     $('start').textContent = 'Stop';
     setMsg(choice === 'sim' ? 'Simulated engine: idle, four pulls with gear shifts, back to idle (loops).'
       : loop ? 'Loopback test: the simulated engine plays on the Mac output and is analysed from the selected input.' : '');
     requestAnimationFrame(draw);
   } catch (e) {
-    setMsg('Could not start audio: ' + e.message);
+    setMsg('Could not start audio: ' + e.message, true);
     stop();
   }
 }
@@ -159,14 +162,20 @@ function stop() {
   if (ac) ac.close();
   ac = null; monitor = null; worklet = null;
   $('start').textContent = 'Start';
+  last = null;
+  drawTach();
 }
 
 // ---------- results from the worker ----------
+let resultsThisSecond = 0, peakLevel = -120, silentSince = 0;
 function onResult(e) {
   const m = e.data;
   if (m.type !== 'result' || !ac) return;
   const tNow = ac.currentTime;
   const wall = performance.now();
+  resultsThisSecond++;
+  peakLevel = Math.max(peakLevel, m.levelDb);
+  if (m.levelDb > -70) silentSince = 0; else if (!silentSince) silentSince = wall;
   const transitMs = (tNow - m.t) * 1000; // chunk's last sample → result on the page
 
   for (const k of ['gyro', 'pd']) {
@@ -189,6 +198,20 @@ function onResult(e) {
   if (udpOn && r) sendWs({ type: 'rpm', rpm: r.rpm ?? 0, maxRpm: S.redline, idleRpm: S.idle, source: feed() });
 }
 
+// once a second: input level, update rate, silent-input hint
+setInterval(() => {
+  if (!running) { $('level').textContent = '—'; $('level-bar').style.width = '0'; $('rate').textContent = '0'; return; }
+  $('rate').textContent = resultsThisSecond;
+  $('level').textContent = peakLevel <= -119 ? 'silent' : Math.round(peakLevel) + ' dB';
+  $('level-bar').style.width = Math.max(0, Math.min(100, (peakLevel + 80) * 1.25)) + '%';
+  $('level-bar').style.background = peakLevel > -3 ? 'var(--bad)' : peakLevel > -70 ? 'var(--gyro)' : 'var(--dim)';
+  if (resultsThisSecond === 0) setMsg('The detectors are not receiving audio chunks (audio worklet / worker not running). Open the browser console for details.', true);
+  else if (stream && silentSince && performance.now() - silentSince > 2000) {
+    setMsg(`No sound is reaching "${$('source').selectedOptions[0]?.textContent}". If it's BlackHole: set System Settings → Sound → Output to your Multi-Output Device (it feeds BlackHole), and play something.`, true);
+  } else if ($('msg').classList.contains('error')) setMsg('');
+  resultsThisSecond = 0; peakLevel = -120;
+}, 1000);
+
 // measured end-to-end lag, once a second (off the audio path)
 setInterval(() => {
   if (!sim) return;
@@ -205,9 +228,9 @@ let ws = null, udpOn = false;
 function sendWs(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { $('ws-dot').classList.add('on'); $('ws-state').textContent = 'connected'; };
+  ws.onopen = () => { $('ws-dot').classList.add('on'); $('ws-state').textContent = 'server'; };
   ws.onclose = () => {
-    $('ws-dot').classList.remove('on'); $('ws-state').textContent = 'disconnected (is `npm start` running?)';
+    $('ws-dot').classList.remove('on'); $('ws-state').textContent = 'server down (npm start?)';
     setTimeout(connect, 1000);
   };
   ws.onmessage = e => {
@@ -215,17 +238,19 @@ function connect() {
     if (m.type !== 'status') return;
     udpOn = m.udp;
     $('udp').checked = m.udp;
-    $('target').textContent = m.target;
-    $('pps').textContent = m.packetsPerSec;
-    $('udp-state').textContent = m.udp ? (m.packetsPerSec ? `· sending ${m.rpm} rpm from ${m.source}` : '· on, waiting for readings') : '· paused';
+    $('udp-state').textContent = m.udp ? `→ ${m.target} · ${m.packetsPerSec} pkt/s` : '· UDP paused';
     $('udp-err').textContent = m.error ? ' · UDP error: ' + m.error : '';
   };
 }
 
 // ---------- drawing ----------
 function setupCanvas(c) {
+  // CSS size comes from data-h (fixed) and the layout width; the backing store is that × devicePixelRatio.
+  // (Reading the height back from the canvas itself made it double every frame on Retina screens.)
   const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth, h = Number(c.getAttribute('height'));
+  const h = Number(c.dataset.h);
+  if (c.style.height !== h + 'px') c.style.height = h + 'px';
+  const w = c.clientWidth;
   if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
   const g = c.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -279,11 +304,12 @@ function drawTach() {
   };
   if (rpmOther !== null) needle(rpmOther, color[other] + 'aa', 2, R - 20);
   needle(rpm ?? 0, rpm === null ? '#3a444f' : '#f5f7fa', 4, R - 12);
+  if (!running) { g.fillStyle = css('--dim'); g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText('press Start', cx, cy - R * 0.15); }
   g.fillStyle = color[k]; g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.fill();
 
   g.textBaseline = 'alphabetic';
   g.fillStyle = rpm === null ? css('--dim') : css('--text');
-  g.font = '700 40px system-ui';
+  g.font = `700 ${Math.round(R * 0.3)}px system-ui`;
   g.fillText(rpm === null ? '—' : Math.round(rpm).toLocaleString(), cx, cy + R * 0.62);
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
   g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : 'pitch-detection'), cx, cy + R * 0.62 + 18);
@@ -400,8 +426,8 @@ function stats(key) {
     if (p[key] != null) { locked++; err += Math.abs(p[key] - p.truth); }
   }
   if (!n) return '';
-  if (!locked) return 'vs truth: never locked';
-  return `vs truth now (${HIST_S}s): mean error ${Math.round(err / locked)} rpm · locked ${Math.round((100 * locked) / n)}%`;
+  if (!locked) return 'vs truth: no lock';
+  return `vs truth: ±${Math.round(err / locked)} rpm · locked ${Math.round((100 * locked) / n)}%`;
 }
 
 let lastStats = 0;
@@ -412,7 +438,7 @@ function drawCards() {
     if (r && r.rpm !== null) { el.textContent = Math.round(r.rpm).toLocaleString(); el.classList.remove('off'); }
     else { el.textContent = '—'; el.classList.add('off'); }
     $(k + '-sub').textContent = !r ? '' : r.coast ? 'holding (reading rejected)'
-      : r.valid ? `${r.f0.toFixed(1)} Hz · ${r.info} · window ${Math.round(r.winMs)} ms` : 'no clear signal';
+      : r.valid ? `${r.f0.toFixed(0)} Hz · window ${Math.round(r.winMs)} ms` : 'no clear signal';
   };
   show('gyro', last.gyro); show('pd', last.pd);
   $('card-gyro').classList.toggle('selected', feed() === 'gyro');
@@ -471,3 +497,5 @@ $('pd-algo-name').textContent = S.algo;
 showScales();
 connect();
 listInputs(false);
+drawTach();
+window.addEventListener('resize', () => { if (!running) drawTach(); });

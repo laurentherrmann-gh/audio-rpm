@@ -5,7 +5,7 @@
 import { Pipeline } from './pipeline.js';
 
 let pipe = null, audioPort = null;
-let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0;
+let pending = false, lastT = 0, chunksSinceRun = 0, lastSpectrum = 0, peakRms = 0;
 
 self.onmessage = e => {
   const m = e.data;
@@ -25,6 +25,9 @@ function onChunk(e) {
   if (m.type !== 'chunk' || !pipe) return;
   pipe.push(m.raw, m.dec);
   lastT = m.t;
+  let sum = 0;
+  for (let i = 0; i < m.raw.length; i++) sum += m.raw[i] * m.raw[i];
+  peakRms = Math.max(peakRms, Math.sqrt(sum / m.raw.length));
   chunksSinceRun++;
   if (!pending) { pending = true; setTimeout(run, 0); }
 }
@@ -39,5 +42,7 @@ function run() {
     if (now - lastSpectrum > 33) lastSpectrum = now; // spectrum for the display at ~30 Hz
     else r.gyro.ex = null;
   }
-  self.postMessage({ type: 'result', t: lastT, skipped, gyro: r.gyro, pd: r.pd });
+  const levelDb = 20 * Math.log10(Math.max(peakRms, 1e-6)); // input level, for the meter
+  peakRms = 0;
+  self.postMessage({ type: 'result', t: lastT, skipped, levelDb, gyro: r.gyro, pd: r.pd });
 }
