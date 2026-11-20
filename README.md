@@ -52,8 +52,11 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 
 ### 3. Something to listen to
 
-- **Simulated engine** (first entry in the source list): each card shows its error against the
-  truth, and the latency panel measures the real lag. Tick *hear simulation* to hear it.
+- **Simulated engines** (top of the source list): 4-cyl, 5-cyl, 6-cyl, V8, V10, V12, or **random**, whose
+  cylinder count stays hidden until Auto has locked one, then is revealed with ✓ or ✗. Each card shows
+  its error against the truth, and the latency panel measures the real lag. *Settings → Simulated
+  driving* switches between idle-then-pulls and a rally pattern that never idles. Tick *hear sim* to
+  hear it.
 - **A test WAV** through the real capture path: `npm run make-wav` (60 s sweep with gear shifts) or
   `npm run make-wav -- --rpm 4000` (constant), then `afplay engine-sweep.wav`.
 - **Real footage:** a DiRT Rally 2.0 onboard video. Set *cylinders* to the car's engine, then use
@@ -75,7 +78,7 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
   | process time | time to run the detector once, average / 95th percentile |
   | transport | audio thread → worker → page, including queueing |
   | = estimate | the sum |
-  | measured | delay that best aligns the output with the true RPM (simulation or loopback test) |
+  | measured | delay that best aligns the output with the true RPM (simulation or loopback test). **no match** = no delay explains the output: the rpm is on the wrong scale (wrong cylinder count), not late |
 
 - **Chart:** last 20 s, both detectors against the true RPM; dots are raw readings before tracking.
 - **Spectrum:** what gyroball sees, with each detector's pick marked.
@@ -183,29 +186,43 @@ the same rate. The cylinder selector in the top bar offers:
 - **4, 5, 6, 8, 10 or 12** by hand.
 
 How auto works: no two cylinders fire exactly alike, so an engine's sound also repeats once per engine
-cycle (two crank turns). That adds faint tones between the firing harmonics, spaced by firing ÷ N. For
-each candidate N, `public/detectors/cylinders.js` checks whether those tones stand out against the
+cycle (two crank turns). That adds faint tones between the firing harmonics, spaced by firing ÷ N.
+`public/detectors/cylinders.js` checks, for each candidate N, whether those tones stand out against the
 spectrum halfway between them, and takes the largest N that fits (a V8's pattern contains a
-4-cylinder's, never the reverse). It runs every 0.1 s while the revs are steady (idle, cruising), on
-a 0.7 s spectrum, or 1.4 s when the firing tone is below 60 Hz (small engines near idle), and locks
-once one count holds a clear majority of recent votes. Until then, RPM is computed as a 4-cylinder and
-the tach shows "auto…".
+4-cylinder's, never the reverse). Votes are counted every 0.1 s; a count locks once it holds a clear
+majority, and the tach shows "auto…" until then.
 
-`npm run bench -- --auto` on the simulated sweep, where the only steady moments are idle:
+**No idle needed: order tracking.** While the revs change, an ordinary spectrum smears those faint tones.
+So the pipeline resamples the audio on the engine's own rhythm: the tracked firing tone gives the
+engine's phase at every moment, and the sound is re-sampled 64 times per firing cycle over the last
+64 cycles (at most 1.4 s). In that "order spectrum" the firing tone sits at order 1 and an N-cylinder's
+cycle tones at k/N, whatever the revs did, so the count works during pulls just as at idle.
 
-| engine | mode | locked | after | wrong lock | pitch error | gyroball error |
-|---|---|---|---|---|---|---|
-| 4 cylinders | rally | 4 | 1.6 s | 0% | 55 rpm | 180 rpm |
-| 5 cylinders | rally | 5 | 1.6 s | 0% | 37 rpm | 153 rpm |
-| 6 cylinders | rally | 6 | 1.6 s | 0% | 55 rpm | 94 rpm |
-| V8 | rally | 8 | 1.0 s | 0% | 46 rpm | 105 rpm |
-| V10 | any | 10 | 0.9 s | 0% | 30 rpm | 122 rpm |
-| V12 | any | 12 | 0.9 s | 0% | 28 rpm | 128 rpm |
-| **V12** | **rally** | **4** | 0.9 s | **97%** | 2,351 rpm | 2,082 rpm |
+**RPM gating (0–10,500 rpm).** For a firing tone f, N cylinders means 120·f/N rpm. A count is ruled out
+once the revs have stayed for half a second at a level it would turn into more than 10,500 rpm (or
+idle below 400 rpm), and a locked count is dropped if that happens. Gating alone can't separate 4, 5
+and 6 (their rpm differ by only 20–25%, less than the uncertainty on idle and redline: a 4-cylinder at
+7,500 rpm rules nothing out), but it rules out gross errors at high revs: a V8 at 7,500 rpm can't be
+a 4- or 5-cylinder, a V12 at 7,000 can't be a 4, 5 or 6. Before a lock, the count used is the
+smallest one still possible.
 
-The last row is the price of the rally set: an engine outside it is miscounted with confidence (a V12's
-tones contain a 4-cylinder's pattern), reading 3× the real RPM. So use **Auto · any** for anything that
-isn't a DiRT Rally 2.0 car.
+`npm run bench -- --auto`, simulated engines (time to lock, share of time locked to a wrong count,
+pitch-detection error once locked):
+
+| engine | mode | idle, then four pulls | rally: never idle |
+|---|---|---|---|
+| 4 cylinders | rally | 4 after 1.7 s · 0% · 55 rpm | 4 after 0.8 s · 0% · 43 rpm |
+| 5 cylinders | rally | 5 after 1.5 s · 0% · 37 rpm | 5 after 0.7 s · 0% · 38 rpm |
+| 6 cylinders | rally | 6 after 2.9 s · 0% · 43 rpm | 6 after 0.7 s · 0% · 40 rpm |
+| V8 | rally | 8 after 1.1 s · 0% · 46 rpm | 8 after 0.7 s · 0% · 34 rpm |
+| V10 | any | 10 after 1.2 s · 0% · 30 rpm | 10 after 0.7 s · 0% · 33 rpm |
+| V12 | any | 12 after 1.1 s · 0% · 28 rpm | 12 after 1.4 s · 0% · 35 rpm |
+| **V12** | **rally** | **no count** · wrong 12% of the time | **no count** · wrong 19% of the time |
+
+The last row is the price of the rally set: a V12 isn't in it, so its rpm can't come out right
+(~2,000 rpm error). Gating keeps it from settling on a wrong count (before gating it stayed locked as a
+4-cylinder, at 3× the real rpm, 97% of the time). Use **Auto · any** for anything that isn't a
+DiRT Rally 2.0 car.
 
 What this can't know: it relies on the faint per-cylinder tones. A perfectly regular engine (the
 simulator with them switched off) is never given a count, rather than a wrong one. Real game audio
@@ -231,7 +248,7 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Settings
 
 - **Cylinders** (top bar): see above. **Idle / redline**: the search band (also sent to SimHub).
-- **Simulated engine**: the simulated engine's cylinder count (4, 5, 6, V8, V10, V12), to try auto-detection.
+- **Simulated driving**: idle then four pulls, or rally (pulls and shifts, never idle).
 - **Chunk**: how often detection runs (2.7 / 5.3 / 11 ms). Smaller = less waiting, more CPU.
 - **Predict ahead**: compensates the half-window delay. **Adaptive pitch window**: see above.
   **Pitch max window**: the window at idle and when nothing is locked.
@@ -244,9 +261,9 @@ co-driver) will be harder, so treat these numbers as a ranking, not a promise.
 ## Tests
 
 ```sh
-npm test          # packet layout, detectors (4–12 cyl), cylinder detection, tracker, pipeline, lag estimator
+npm test          # packet layout, detectors (4–12 cyl), cylinder detection (incl. no idle, gating), tracker, pipeline, lag estimator
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
-npm run bench -- --auto   # cylinder auto-detection on every engine
+npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 ```
 
 ## Layout

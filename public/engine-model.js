@@ -75,6 +75,13 @@ export function makeSchedule({ idleRpm = 900, redline = 7500 } = {}) {
   return pts;
 }
 
+/** Rally-like schedule with no steady moment at all: pulls, shifts and lifts, never idle. */
+export function makeNoIdleSchedule({ redline = 7500 } = {}) {
+  const top = redline * 0.97, shift = redline * 0.62;
+  return [[0, 2500], [1.6, top], [1.75, shift], [3.6, top], [3.75, shift], [6, top], [6.15, shift],
+    [8.4, redline * 0.9], [9, redline * 0.45], [9.6, redline * 0.55], [10.6, 2500]];
+}
+
 /** Constant rpm schedule, for deterministic tests. */
 export function constantSchedule(rpm, seconds = 10) {
   return [[0, rpm], [seconds, rpm]];

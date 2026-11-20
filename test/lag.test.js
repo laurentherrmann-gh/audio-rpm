@@ -30,6 +30,14 @@ test('a constant error at idle does not bias the estimate', () => {
   assert.ok(r && Math.abs(r.lag - 0.03) <= 0.006, `got ${r && r.lag}`);
 });
 
+test('rpm on the wrong scale (wrong cylinder count) is "no match", not a huge lag', () => {
+  for (const f of [2, 1.5, 0.8]) {
+    const pts = outputs(0.01).map(p => ({ t: p.t, y: p.y * f }));
+    const r = estimateLag(pts, truth);
+    assert.ok(r && r.match === false && r.lag === null, `scale ${f}: ${JSON.stringify(r)}`);
+  }
+});
+
 test('steady revs give no estimate', () => {
   const pts = Array.from({ length: 200 }, (_, i) => ({ t: i * 0.01, y: 3000 }));
   assert.equal(estimateLag(pts, () => 3000), null);

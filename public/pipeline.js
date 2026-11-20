@@ -26,17 +26,21 @@ import { Ring } from './ring.js';
 const MAX_FFT = 32768;
 const MAX_PD_WIN = 0.2;    // s, longest pitch window
 const FULL_RATE_WIN = 0.025; // s: pitch windows this short read the full-rate stream
-// cylinder detection spectrum, at the decimated rate: 8192 (~0.68 s, ~1.5 Hz bins), or 16384 (~1.4 s,
-// ~0.7 Hz bins) when the firing tone is low: a 4-cylinder idling at 900 rpm has its cycle tones
-// only 7.5 Hz apart, and the coarser spectrum resolves too few of them.
-const CYL_FFT = 8192, CYL_FFT_LOW = 16384, CYL_LOW_HZ = 60;
+// Cylinder detection uses order tracking: the decimated audio is resampled on the tracked firing
+// phase (ORD_S samples per firing cycle), so the engine looks like it runs at constant revs even
+// while revving, and its cycle tones stay sharp. Up to ORD_CYCLES firing cycles, within ORD_SPAN s;
+// at least 5 × the largest candidate count, so each candidate's tones are resolvable.
+const ORD_S = 64, ORD_CYCLES = 64, ORD_SPAN = 1.4, ORD_GAP = 0.03;
 const CYL_EVERY = 0.1;     // s between detection attempts
-const CYL_STEADY = 0.012;  // the firing frequency may vary at most ±1.2% over the spectrum window
 const CYL_TAU = 4;         // s, how long a vote counts
 const CYL_LOCK = { votes: 3, share: 0.6 };
+// RPM gating: a cylinder count is impossible if it makes the sustained revs exceed rpmMax (or
+// idle fall below rpmMin). "Sustained" = held for REVS_HOLD s, so a brief octave slip can't veto the
+// right count. Remembered revs fade over REVS_MEMORY s (another car can be driven next).
+const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 
 export const DEFAULTS = Object.freeze({
-  cylinders: 4, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, idle: 900, redline: 7500,
+  cylinders: 4, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto' },
   pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012 },
@@ -64,7 +68,7 @@ export class Pipeline {
   constructor(fs, D, cfg = {}) {
     this.fs = fs; this.D = D; this.fsDec = fs / D;
     this.raw = new Ring(MAX_FFT);
-    this.dec = new Ring(Math.max(Math.ceil(MAX_PD_WIN * this.fsDec), CYL_FFT_LOW + 256));
+    this.dec = new Ring(Math.ceil(Math.max(MAX_PD_WIN, ORD_SPAN + 0.3) * this.fsDec));
     this.cyl = this.freshCyl();
     this.trackers = { gyro: new Tracker(), pd: new Tracker() };
     this.bufs = new Map();
@@ -87,18 +91,65 @@ export class Pipeline {
 
   reset() { this.trackers.gyro.reset(); this.trackers.pd.reset(); }
 
-  freshCyl() { return { votes: {}, locked: null, lastEval: -Infinity, lastDecay: null, history: [], last: null }; }
+  freshCyl() {
+    return { votes: {}, locked: null, lastEval: -Infinity, lastDecay: null, last: null,
+      revs: { win: [], fHigh: 0, fLow: 0, t: null, track: [] }, provisional: null, excluded: new Set() };
+  }
+
+  /**
+   * Is N cylinders compatible with the sustained revs seen so far (rpmMin … rpmMax)?
+   * With hysteresis: a ruled-out count only returns once the revs fall 10% inside the limit,
+   * so a remembered peak hovering at the limit can't flip the count back and forth.
+   */
+  plausible(N) {
+    const { fHigh, fLow } = this.cyl.revs, ex = this.cyl.excluded;
+    const high = fHigh ? (120 * fHigh) / N : 0, low = fLow ? (120 * fLow) / N : Infinity;
+    const out = high > this.cfg.rpmMax || low < this.cfg.rpmMin;
+    const backIn = high < 0.9 * this.cfg.rpmMax && low > 1.1 * this.cfg.rpmMin;
+    if (out) ex.add(N); else if (backIn) ex.delete(N);
+    return !ex.has(N);
+  }
+
+  /** Auto mode: candidates still possible given the revs. */
+  candidates() {
+    const all = this.cfg.autoCandidates, ok = all.filter(N => this.plausible(N));
+    return ok.length ? ok : [all[all.length - 1]];
+  }
 
   /** Cylinder count used for the rpm conversion right now. */
   cylinders() {
     const c = this.cfg.cylinders;
-    return c === 'auto' ? (this.cyl.locked ?? this.cfg.autoGuess) : c;
+    if (c !== 'auto') return c;
+    if (this.cyl.locked !== null) return this.cyl.locked;
+    return Math.max(this.cfg.autoGuess, this.candidates()[0]); // smallest still-plausible count
+  }
+
+  /** Record the tracked firing frequency; update the sustained high / low used by the gating. */
+  noteRevs(t, f) {
+    const r = this.cyl.revs;
+    if (r.t !== null) {
+      const k = Math.exp(-(t - r.t) / REVS_MEMORY);
+      r.fHigh *= k;
+      if (r.fLow) r.fLow /= k;
+    }
+    r.t = t;
+    r.track.push({ t, f });
+    while (r.track.length && r.track[0].t < t - ORD_SPAN - 0.2) r.track.shift();
+    r.win.push({ t, f });
+    while (r.win.length && r.win[0].t < t - REVS_HOLD) r.win.shift();
+    if (r.win.length < 10 || r.win[0].t > t - REVS_HOLD * 0.9) return;
+    let lo = Infinity, hi = 0;
+    for (const x of r.win) { lo = Math.min(lo, x.f); hi = Math.max(hi, x.f); }
+    r.fHigh = Math.max(r.fHigh, lo);             // held at least this high for REVS_HOLD
+    r.fLow = r.fLow ? Math.min(r.fLow, hi) : hi; // held at most this low for REVS_HOLD
   }
 
   band() {
     const { idle, redline, cylinders } = this.cfg;
-    if (cylinders === 'auto' && this.cyl.locked === null) { // not counted yet: every candidate engine
-      const cands = this.cfg.autoCandidates;
+    if (cylinders === 'auto') {
+      // every still-plausible engine, even once a count is locked: a wrong lock must not narrow the
+      // search so far that the tone proving it wrong (via the rpm gating) is never heard
+      const cands = this.candidates();
       return { fLo: firingHz(idle * 0.7, Math.min(...cands)), fHi: firingHz(redline * 1.15, Math.max(...cands)) };
     }
     const n = this.cylinders();
@@ -112,50 +163,76 @@ export class Pipeline {
     return {
       mode: this.cfg.cylinders === 'auto' ? 'auto' : 'manual', n: this.cylinders(), locked: c.locked,
       candidate: best ? Number(best[0]) : null, confidence: best && total ? best[1] / total : 0,
+      possible: this.cfg.cylinders === 'auto' ? this.candidates() : null,
     };
   }
 
-  /** Auto mode: count cylinders when the revs have been steady for a whole spectrum window. */
+  /**
+   * Order spectrum of the latest stretch of audio: resample it on the tracked firing phase, so the
+   * firing tone sits at order 1 and an N-cylinder engine's cycle tones at k/N, whatever the revs did.
+   * Returns detectCylinders' result, or null when the tracking doesn't cover enough cycles.
+   */
+  orderSpectrumCylinders(tNow) {
+    const track = this.cyl.revs.track;
+    if (track.length < 20) return null;
+    // contiguous stretch of tracked firing frequency ending now (no gaps: a gap means a rejected
+    // reading or a gear shift, where the phase can't be followed)
+    let i0 = track.length - 1;
+    const tLast = track[i0].t;
+    while (i0 > 0 && track[i0].t - track[i0 - 1].t < ORD_GAP && tLast - track[i0 - 1].t <= ORD_SPAN) i0--;
+    const seg = track.slice(i0);
+    if (seg.length < 20 || tLast > tNow) return null;
+    // firing phase (in cycles) at each tracked point
+    const P = new Float64Array(seg.length);
+    for (let j = 1; j < seg.length; j++) P[j] = P[j - 1] + (seg[j].t - seg[j - 1].t) * (seg[j].f + seg[j - 1].f) / 2;
+    const cands = this.candidates();
+    const M = Math.min(ORD_CYCLES, Math.floor(P[P.length - 1]));
+    if (M < 5 * Math.max(...cands)) return null;
+    // audio covering the stretch; sample i of `frame` is at time tNow − (len − 1 − i) / fsDec
+    const fsd = this.fsDec, len = Math.ceil((tNow - seg[0].t) * fsd) + 2;
+    if (len > this.dec.size) return null;
+    const frame = this.dec.latest(len, this.buf('of', len));
+    const n = M * ORD_S, L = 2 ** Math.ceil(Math.log2(n));
+    const x = this.buf('ox', L, Float64Array);
+    x.fill(0);
+    const w = this.hann(n), phi0 = P[P.length - 1] - M;
+    let j = 0;
+    for (let k = 0; k < n; k++) {
+      const phi = phi0 + (k + 0.5) / ORD_S;
+      while (j < P.length - 2 && P[j + 1] < phi) j++;
+      const t = seg[j].t + ((phi - P[j]) / (P[j + 1] - P[j])) * (seg[j + 1].t - seg[j].t);
+      const pos = len - 1 - (tNow - t) * fsd, i = Math.floor(pos), u = pos - i;
+      const v = i >= 0 && i + 1 < len ? frame[i] * (1 - u) + frame[i + 1] * u : 0;
+      x[k] = v * w[k];
+    }
+    const mag = rfft(x), db = this.buf('odb', L / 2);
+    for (let i = 0; i < L / 2; i++) db[i] = 20 * Math.log10(Math.max(mag[i] / n, 1e-12));
+    // in this spectrum the unit is "orders of the firing frequency": firing = 1, bin = ORD_S / L
+    return detectCylinders(db, ORD_S / L, 1, { candidates: cands, minHz: 0.08 });
+  }
+
+  /** Auto mode: count cylinders from the order spectrum (works while revving, not only at idle). */
   detectCyl(t) {
     const c = this.cyl;
-    if (this.cfg.cylinders !== 'auto' || t - c.lastEval < CYL_EVERY) return;
+    if (this.cfg.cylinders !== 'auto') return;
+    // gating veto: a locked count that implies impossible revs is dropped
+    if (c.locked !== null && !this.plausible(c.locked)) {
+      delete c.votes[c.locked];
+      c.locked = null;
+      this.reset();
+    }
+    // the provisional count follows the gating; its rpm scale changes, so restart the trackers
+    const prov = c.locked === null ? this.cylinders() : null;
+    if (prov !== c.provisional) { if (c.provisional !== null && prov !== null) this.reset(); c.provisional = prov; }
+    if (t - c.lastEval < CYL_EVERY) return;
     c.lastEval = t;
     if (c.lastDecay !== null) {
       const k = Math.exp(-(t - c.lastDecay) / CYL_TAU);
       for (const n in c.votes) c.votes[n] *= k;
     }
     c.lastDecay = t;
-    // window length depends on the tone: decide with the latest reading, then check steadiness over it
-    const lastF = c.history.length ? c.history[c.history.length - 1].f : 0;
-    const nfft = lastF && lastF < CYL_LOW_HZ ? CYL_FFT_LOW : CYL_FFT;
-    const span = nfft / this.fsDec;
-    c.history = c.history.filter(x => x.t >= t - (CYL_FFT_LOW / this.fsDec) - 0.2);
-    const h = c.history.filter(x => x.t >= t - span);
-    if (h.length < 20 || h[0].t > t - span + 0.15) return; // not enough readings across the window
-    // Steady = most readings agree with their median, up to an octave: pitch detectors slip to
-    // half or double the firing tone now and then (engines have strong half orders); that is not
-    // a change in revs. The reference is the octave most readings are in.
-    const fs = h.map(x => x.f).sort((a, b) => a - b);
-    const med = fs[fs.length >> 1];
-    const byOctave = new Map();
-    let agree = 0;
-    for (const f of fs) {
-      const oct = Math.round(Math.log2(f / med));
-      if (Math.abs(oct) > 1 || Math.abs((f / 2 ** oct) / med - 1) > 2 * CYL_STEADY) continue;
-      agree++;
-      if (!byOctave.has(oct)) byOctave.set(oct, []);
-      byOctave.get(oct).push(f);
-    }
-    if (agree < 0.8 * fs.length) return; // revs changing: lines would smear
-    const main = [...byOctave.values()].sort((a, b) => b.length - a.length)[0];
-    const fRef = main[main.length >> 1];
-
-    const frame = this.dec.latest(nfft, this.buf('cf', nfft));
-    const w = this.hann(nfft), x = this.buf('cx', nfft, Float64Array);
-    for (let i = 0; i < nfft; i++) x[i] = frame[i] * w[i];
-    const mag = rfft(x), db = this.buf('cdb', nfft / 2);
-    for (let i = 0; i < nfft / 2; i++) db[i] = 20 * Math.log10(Math.max(mag[i] / nfft, 1e-12));
-    const r = detectCylinders(db, this.fsDec / nfft, fRef, { candidates: this.cfg.autoCandidates });
+    const r = this.orderSpectrumCylinders(t);
+    if (!r) return;
     c.last = r;
     if (!r.n) return;
     c.votes[r.n] = (c.votes[r.n] || 0) + 1;
@@ -247,12 +324,15 @@ export class Pipeline {
     const frame = ring.latest(N, this.buf(full ? 'pfr' : 'pf', N));
     const { fLo, fHi } = this.band();
     const r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi });
-    if (r.valid) this.cyl.history.push({ t: tEnd - N / fs / 2, f: r.f0 });
     this.detectCyl(tEnd);
     const raw = r.valid ? rpmFromFiringHz(r.f0, this.cylinders()) * this.cfg.scale.pd : null;
-    return this.finish('pd', raw, tEnd, N / fs / 2, t0, {
+    const res = this.finish('pd', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `clarity ${r.clarity.toFixed(2)}` : '', winMs: (N / fs) * 1000,
     });
+    if (this.cfg.cylinders === 'auto' && tr.x !== null && !res.coast) {
+      this.noteRevs(tEnd - N / fs / 2, firingHz(tr.x / this.cfg.scale.pd, this.cylinders()));
+    }
+    return res;
   }
 
   finish(key, raw, tEnd, halfWin, t0, extra) {

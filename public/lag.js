@@ -7,7 +7,10 @@
  * @param {{t:number, y:number|null}[]} points  t in seconds on the truth's clock
  * @param {(t:number) => number} truthAt
  * @param {{minLag?:number, maxLag?:number, step?:number, minRange?:number}} [opts]
- * @returns {{lag:number, err:number}|null}  lag in seconds, err = mean |y − truth| at that lag
+ * @returns {{lag:number|null, err:number, match:boolean}|null}  lag in seconds, err = median |y − truth|
+ *   at that lag; null when the revs don't change enough. match = false (and lag null) when no delay
+ *   explains the output: the error stays large, or the best fit sits at the edge of the search range.
+ *   That happens when the rpm is on the wrong scale (wrong cylinder count), not when it is late.
  */
 export function estimateLag(points, truthAt, { minLag = -0.1, maxLag = 0.4, step = 0.002, minRange = 800 } = {}) {
   // Only moments when the revs are ramping carry timing information. Steady revs fit every lag
@@ -37,5 +40,8 @@ export function estimateLag(points, truthAt, { minLag = -0.1, maxLag = 0.4, step
     const med = errs[errs.length >> 1];
     if (!best || med < best.err) best = { lag: L, err: med };
   }
-  return best;
+  const span = hi - lo;
+  const atEdge = best.lag <= minLag + step / 2 || best.lag >= maxLag - step / 2;
+  const match = !atEdge && best.err <= Math.max(150, 0.05 * span);
+  return match ? { ...best, match } : { lag: null, err: best.err, match };
 }

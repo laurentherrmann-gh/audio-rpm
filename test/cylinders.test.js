@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import rfft from 'fourier-transform';
 import { detectCylinders } from '../public/detectors/cylinders.js';
 import { Pipeline } from '../public/pipeline.js';
-import { CYLINDERS, RALLY_CYLINDERS, firingHz, synthesize, constantSchedule, makeSchedule, rpmAt } from '../public/engine-model.js';
+import { CYLINDERS, RALLY_CYLINDERS, firingHz, synthesize, constantSchedule, makeSchedule, makeNoIdleSchedule, rpmAt } from '../public/engine-model.js';
 import { engineFrame } from './helpers.js';
 
 // --- the detector on single steady spectra ---
@@ -86,6 +86,21 @@ test('auto mode: shifting sweep (V8) locks during the idle and reads the revs', 
   assert.equal(r.cyl.locked, 8);
   assert.ok(lockedAt !== null && lockedAt < 3, `locked after ${lockedAt} s`);
   assert.ok(Math.abs(r.pd.rpm - rpmAt(schedule, 10)) < 400, `pd ${r.pd.rpm} vs ${rpmAt(schedule, 10)}`);
+});
+
+for (const cyl of RALLY_CYLINDERS) {
+  test(`auto mode, no idle at all (pulls and shifts only): ${cyl} cylinders locks within 1.5 s`, () => {
+    const { r, lockedAt } = runAuto(makeNoIdleSchedule(), 4, cyl, 0.06, RALLY_CYLINDERS);
+    assert.equal(r.cyl.locked, cyl);
+    assert.ok(lockedAt < 1.5, `locked after ${lockedAt} s`);
+  });
+}
+
+test('rpm gating: a V12 in rally mode is not left locked as a 4-cylinder (3× the rpm)', () => {
+  const schedule = makeSchedule({ idleRpm: 900, redline: 7500 });
+  const { r } = runAuto(schedule, 9, 12, 0.06, RALLY_CYLINDERS);
+  assert.notEqual(r.cyl.locked, 4);
+  assert.ok(!r.cyl.possible.includes(4), `still possible: ${r.cyl.possible}`);
 });
 
 test('auto mode: a perfectly regular engine never locks a count', () => {
