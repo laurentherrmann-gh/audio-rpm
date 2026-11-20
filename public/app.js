@@ -76,15 +76,23 @@ async function listInputs(askPermission) {
     try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(t => t.stop()); }
     catch (e) { setMsg('Microphone permission refused: ' + e.message); return; }
   }
-  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+  // Before microphone access is granted, Chrome lists inputs without names or ids; those can't be
+  // opened ("Constraints could not be satisfied"), so only list inputs it actually names.
+  const devs = (await navigator.mediaDevices.enumerateDevices())
+    .filter(d => d.kind === 'audioinput' && d.deviceId && d.label);
   const sel = $('source');
   const keep = store.get('source', 'sim');
   sel.innerHTML = '<option value="sim">Simulated engine (known RPM)</option>';
-  devs.forEach((d, i) => {
+  for (const d of devs) {
     const o = document.createElement('option');
-    o.value = d.deviceId; o.textContent = d.label || `Input ${i + 1}`;
+    o.value = d.deviceId; o.textContent = d.label;
     sel.appendChild(o);
-  });
+  }
+  if (!devs.length && !askPermission) {
+    const o = document.createElement('option');
+    o.disabled = true; o.textContent = 'Audio inputs: click "List inputs"';
+    sel.appendChild(o);
+  }
   const blackhole = devs.find(d => /blackhole/i.test(d.label));
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   else if (blackhole && askPermission) sel.value = blackhole.deviceId;
@@ -109,8 +117,17 @@ async function start() {
       monitor.gain.value = $('hear').checked ? 1 : 0;
       src.connect(monitor).connect(ac.destination);
     } else {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: {
-        deviceId: { exact: choice }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, latency: 0 } });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: {
+          deviceId: { exact: choice }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, latency: 0 } });
+      } catch (err) {
+        if (err.name !== 'OverconstrainedError' && err.name !== 'NotFoundError') throw err;
+        // the remembered input is gone or was listed before access was granted: refresh and explain
+        stop();
+        await listInputs(true);
+        setMsg('That input is not available. The list is refreshed: pick your input (e.g. BlackHole 2ch) and press Start again.', true);
+        return;
+      }
       src = ac.createMediaStreamSource(stream);
       const l = stream.getAudioTracks()[0]?.getSettings?.().latency;
       captureMs = Number.isFinite(l) ? l * 1000 : 0;
