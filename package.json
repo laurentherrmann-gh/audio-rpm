@@ -1,0 +1,21 @@
+{
+  "name": "audio-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "POC: estimate engine RPM from game audio (gyroball-rpm vs pitch-detection) and feed it to SimHub as DiRT Rally 2.0 UDP telemetry",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "listen": "node tools/udp-listen.js",
+    "make-wav": "node tools/make-test-wav.js",
+    "test": "node --test test/*.test.js",
+    "bench": "node tools/bench.js"
+  },
+  "dependencies": {
+    "pitch-detection": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}

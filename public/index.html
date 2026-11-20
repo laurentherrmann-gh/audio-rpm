@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio-bridge · POC 1</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+    "pitch-detection/": "/vendor/pitch-detection/",
+    "fourier-transform": "/vendor/fourier-transform/index.js"
+} }
+</script>
+<style>
+  :root { --bg:#101418; --panel:#1a2027; --text:#e6edf3; --dim:#8b98a5; --grid:#2a333d;
+          --gyro:#4cd964; --pd:#ff9f43; --truth:#c9d1d9; --warn:#ffb020; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 -apple-system, system-ui, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
+  h1 small { color: var(--dim); font-weight: 400; }
+  .panel { background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 14px; border: 2px solid transparent; }
+  .card.selected { border-color: currentColor; }
+  .card.gyro { color: var(--gyro); } .card.pd { color: var(--pd); }
+  .card .name { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .card .rpm { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; color: var(--text); }
+  .card .rpm.off { color: var(--dim); }
+  .card .sub { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  button { background: #3fb9ff; color: #00131f; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #2b3540; color: var(--text); }
+  label { font-size: 13px; color: var(--dim); display: flex; flex-direction: column; gap: 4px; }
+  label.inline { flex-direction: row; align-items: center; gap: 6px; }
+  select, input[type=number] { background: #0e1216; color: var(--text); border: 1px solid var(--grid); border-radius: 6px; padding: 6px; font-size: 14px; }
+  input[type=number] { width: 95px; }
+  canvas { width: 100%; display: block; border-radius: 8px; background: #0b0f13; }
+  #msg { color: var(--warn); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .status { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .status b { color: var(--text); font-weight: 600; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--bad); margin-right: 4px; }
+  .dot.on { background: var(--gyro); }
+  .legend span { margin-right: 14px; font-size: 13px; }
+  .legend i { display:inline-block; width:14px; height:3px; vertical-align: middle; margin-right: 5px; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>audio-bridge <small>· POC 1 · engine audio → RPM → SimHub (DiRT Rally 2.0 UDP)</small></h1>
+
+  <div class="panel">
+    <div class="row">
+      <label>Audio source
+        <select id="source"><option value="sim">Simulated engine (known RPM)</option></select>
+      </label>
+      <button id="start">Start</button>
+      <button id="refresh" class="secondary" title="Ask for mic permission and list input devices">List inputs</button>
+      <label class="inline"><input type="checkbox" id="hear"> hear simulation</label>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="cards">
+    <div class="card gyro" id="card-gyro">
+      <div class="name"><span>gyroball-rpm (spectral harmonics)</span>
+        <label class="inline"><input type="radio" name="feed" value="gyro" checked> → SimHub</label></div>
+      <div class="rpm off" id="gyro-rpm">—</div>
+      <div class="sub" id="gyro-sub">no signal</div>
+      <div class="sub" id="gyro-err"></div>
+    </div>
+    <div class="card pd" id="card-pd">
+      <div class="name"><span>pitch-detection (<span id="pd-algo-name">yin</span>)</span>
+        <label class="inline"><input type="radio" name="feed" value="pd"> → SimHub</label></div>
+      <div class="rpm off" id="pd-rpm">—</div>
+      <div class="sub" id="pd-sub">no signal</div>
+      <div class="sub" id="pd-err"></div>
+    </div>
+  </div>
+  <div style="height:12px"></div>
+
+  <div class="panel">
+    <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 6px">
+      <div class="legend">
+        <span><i style="background:var(--truth)"></i>true rpm (simulation)</span>
+        <span><i style="background:var(--gyro)"></i>gyroball</span>
+        <span><i style="background:var(--pd)"></i>pitch-detection</span>
+        <span style="color:var(--dim)">dots = raw readings before tracking</span>
+      </div>
+      <div class="status" id="truth"></div>
+    </div>
+    <canvas id="hist" height="220"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="status" style="margin-bottom:6px">Spectrum (dB above noise floor, gyroball's view). Dashed lines: detected firing frequency (green = gyroball, orange = pitch-detection).</div>
+    <canvas id="spec" height="150"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label>Cylinders <input type="number" id="cylinders" value="4" min="1" max="12" step="1"></label>
+      <label>Idle rpm <input type="number" id="idle" value="900" min="300" max="3000" step="50"></label>
+      <label>Redline rpm <input type="number" id="redline" value="7500" min="2000" max="20000" step="250"></label>
+      <label>gyroball FFT
+        <select id="fft">
+          <option value="4096">4096 (~85 ms)</option>
+          <option value="8192" selected>8192 (~170 ms)</option>
+          <option value="16384">16384 (~340 ms)</option>
+          <option value="32768">32768 (~680 ms, original)</option>
+        </select>
+      </label>
+      <label>gyroball variant
+        <select id="gvariant">
+          <option value="tuned" selected>Engine-tuned (octave check, wider range)</option>
+          <option value="original">Original gyroball-rpm</option>
+        </select>
+      </label>
+      <label>gyroball mode
+        <select id="gmode">
+          <option value="auto" selected>Auto (harmonics)</option>
+          <option value="1">Strongest peak = 1×</option>
+          <option value="2">Strongest peak = 2×</option>
+        </select>
+      </label>
+      <label>pitch-detection algo
+        <select id="algo">
+          <option value="yin" selected>YIN</option>
+          <option value="mcleod">McLeod (MPM)</option>
+          <option value="hps">HPS (harmonic product)</option>
+        </select>
+      </label>
+      <label>pitch window
+        <select id="pdwin">
+          <option value="4096" selected>4096 (~85 ms)</option>
+          <option value="8192">8192 (~170 ms)</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Smoothing τ (s, 0 = raw) <input type="number" id="tau" value="0.08" min="0" max="2" step="0.02"></label>
+      <label>Max accel (rpm/s²) <input type="number" id="accel" value="40000" min="1000" max="200000" step="5000"></label>
+      <label>Re-acquire after (s) <input type="number" id="reacq" value="0.25" min="0.05" max="2" step="0.05"></label>
+      <label>Actual rpm now <input type="number" id="actual" value="3000" min="300" max="20000" step="100"></label>
+      <button class="secondary" id="cal-gyro">Calibrate gyroball</button>
+      <button class="secondary" id="cal-pd">Calibrate pitch</button>
+      <button class="secondary" id="cal-reset">Reset scales</button>
+    </div>
+    <div class="status" style="margin-top:8px" id="scales"></div>
+  </div>
+
+  <div class="panel status" id="bridge">
+    <span class="dot" id="ws-dot"></span>bridge: <b id="ws-state">connecting…</b> ·
+    SimHub target <b id="target">—</b> · <b id="pps">0</b> packets/s · sending <b id="sending">—</b>
+    <span id="udp-err" style="color:var(--bad)"></span>
+  </div>
+
+  <details class="panel">
+    <summary>How the numbers relate</summary>
+    <p class="status">A 4-stroke engine fires each cylinder once every two crank turns, so the loudest tone is the
+    <b>firing frequency</b> = rpm / 60 × cylinders / 2 (4 cylinders at 6,000 rpm → 200 Hz). Both detectors look for that
+    tone in the band set by idle and redline, then convert back to rpm. If a detector reads exactly half or double,
+    it locked onto a half order or a harmonic: fix it with <b>Calibrate</b> (type the in-game rpm while holding steady revs)
+    or by changing the cylinder count. With the simulated engine, the error lines under each reading compare against the
+    true rpm over the last 20 s.</p>
+  </details>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
