@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clippedShare, findJoins, peakOf } from '../tools/lib/quality.js';
+import { clippedShare, findJoins, findLoop, peakOf, removeLoop } from '../tools/lib/quality.js';
 import { makeNoIdleSchedule, synthesize } from '../public/engine-model.js';
 
 const fs = 48000;
@@ -47,4 +47,33 @@ test('clipping is flat tops at the ceiling, not just a level over full scale', (
   assert.ok(clippedShare(loud) < 0.001);
   const cut = loud.map(v => Math.max(-1, Math.min(1, v)));           // the same, cut at full scale
   assert.ok(clippedShare(cut) > 0.2);
+});
+
+/** What a recorder that plays its input back into itself records: y[n] = x[n] + g·y[n − D]. */
+function loop(x, D, g) {
+  const y = new Float32Array(x.length);
+  for (let i = 0; i < x.length; i++) y[i] = x[i] + (i >= D ? g * y[i - D] : 0);
+  return y;
+}
+
+test('a feedback loop is found (delay and gain) and undone; engine sound alone is not a loop', () => {
+  const x = synthesize(makeNoIdleSchedule(), { fs, seconds: 12, cylinders: 4 }).map(v => v * 0.05);
+  assert.ok(findLoop(x, fs).similarity < 0.4);
+  for (const [D, g] of [[6656, 0.9995], [1999, 0.9], [20000, 0.97]]) {
+    const y = loop(x, D, g), l = findLoop(y, fs);
+    assert.equal(l.delay, D);
+    assert.ok(Math.abs(l.gain - g) < 0.02, `gain ${l.gain} for ${g}`);
+    assert.ok(l.similarity > 0.8);
+    // undone with the true loop: the original, to rounding; in pieces (streaming) the same as at once
+    const clean = removeLoop(y, D, g);
+    let err = 0;
+    for (let i = 0; i < x.length; i++) err = Math.max(err, Math.abs(clean[i] - x[i]));
+    assert.ok(err < 1e-3, `error ${err}`);
+    const state = { tail: new Float32Array(D) }, pieces = [];
+    for (let i = 0; i < y.length; i += 5000) pieces.push(removeLoop(y.subarray(i, i + 5000), D, g, state));
+    let k = 0;
+    for (const p of pieces) for (const v of p) { assert.ok(Math.abs(v - clean[k]) < 1e-6); k++; }
+    // undone with the estimated loop: no longer repeats itself
+    assert.ok(findLoop(removeLoop(y, l.delay, l.gain), fs).similarity < 0.4);
+  }
 });

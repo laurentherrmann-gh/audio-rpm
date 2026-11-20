@@ -11,18 +11,20 @@
 // Every run checks the cut points against the sound: an ad before the video moves the start, and an
 // ad or a pause in the middle is reported (only the cars before it are then cut; --all cuts them all).
 // A recording that lost sound (the recorder dropped blocks: it runs short and clicks) is refused.
+// A feedback loop (the recorder playing its input back into itself) is removed before cutting.
 // Clips are always cut afresh, so files from an earlier recording never stay behind.
 //   npm run fetch-dr2 -- --source test.m4a --check     only check a recording (any length), cut nothing
 // YouTube's terms only allow downloading through YouTube's own features: using yt-dlp is your call.
 // The audio files stay local (samples/dr2/ is git-ignored).
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { slug, fileFor } from '../public/cars.js';
 import { snapshotOf, carFftSize } from '../public/detectors/car-id.js';
 import { alignToBoundaries, noveltyCurve } from './lib/align.js';
-import { clippedShare, findJoins, peakOf } from './lib/quality.js';
+import { clippedShare, findJoins, findLoop, peakOf, removeLoop } from './lib/quality.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -72,20 +74,56 @@ function info(file) {
 }
 const duration = file => info(file).seconds;
 
-/** Lost sound and clipping, from three 30 s excerpts at the recording's own sample rate. */
+/** Three excerpts (up to 30 s each, from the start, middle and end thirds) at the file's own rate, mono. */
+function excerpts(file, seconds) {
+  const len = Math.min(30, seconds / 3);
+  return [0, 1, 2].map(k => {
+    const from = (seconds / 3) * k + (seconds / 3 - len) / 2;
+    const r = spawnSync('ffmpeg', ['-v', 'error', '-ss', String(from), '-t', String(len), '-i', file, '-ac', '1', '-f', 'f32le', '-'], { maxBuffer: 2 ** 28 });
+    const b = r.stdout || Buffer.alloc(0);
+    return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length - (b.length % 4)));
+  });
+}
+
+const LOOP_SIMILARITY = 0.6; // engine sound is about 0.1 alike its delayed self; a loop close to 1
+
+/** Lost sound, a feedback loop and clipping, from three excerpts of the recording. */
 function checkQuality(file) {
   const { seconds, fs } = info(file);
   if (!seconds || !fs) return null;
-  const parts = [0.1, 0.5, 0.9].map(p => {
-    const r = spawnSync('ffmpeg', ['-v', 'error', '-ss', String(Math.max(0, seconds * p - 15)), '-t', '30', '-i', file, '-ac', '1', '-f', 'f32le', '-'], { maxBuffer: 2 ** 28 });
-    const b = r.stdout || Buffer.alloc(0), x = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length - (b.length % 4)));
-    return x.length > fs ? { ...findJoins(x, fs), clipped: clippedShare(x), peak: peakOf(x) } : null;
-  }).filter(Boolean);
+  const parts = excerpts(file, seconds).filter(x => x.length > fs)
+    .map(x => ({ ...findJoins(x, fs), clipped: clippedShare(x), peak: peakOf(x), loop: findLoop(x, fs) }));
   if (!parts.length) return null;
   const worst = parts.reduce((a, b) => (b.dropped && (!a.dropped || b.perSecond > a.perSecond) ? b : a));
-  return { dropped: parts.some(p => p.dropped), perSecond: worst.perSecond, block: worst.block, fs,
+  // a loop repeats every excerpt after the same delay; a sound that repeats by itself does not
+  const loops = parts.map(p => p.loop).filter(l => l.similarity >= LOOP_SIMILARITY);
+  const same = loops.filter(l => Math.abs(l.delay - loops[0].delay) <= 2);
+  const loop = loops.length >= 2 && same.length === loops.length
+    ? { delay: loops[0].delay, gain: [...loops.map(l => l.gain)].sort()[loops.length >> 1], similarity: Math.max(...loops.map(l => l.similarity)) } : null;
+  return { dropped: parts.some(p => p.dropped), perSecond: worst.perSecond, block: worst.block, fs, loop,
     clipped: Math.max(...parts.map(p => p.clipped)), peak: Math.max(...parts.map(p => p.peak)) };
 }
+
+/** Write `out`: the recording (mono, 32-bit float) with the feedback loop undone. */
+async function unloop(file, fs, { delay, gain }, out) {
+  const dec = spawn('ffmpeg', ['-v', 'error', '-i', file, '-ac', '1', '-f', 'f32le', '-'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const enc = spawn('ffmpeg', ['-v', 'error', '-y', '-f', 'f32le', '-ar', String(fs), '-ac', '1', '-i', '-', '-c:a', 'pcm_f32le', out], { stdio: ['pipe', 'inherit', 'inherit'] });
+  const state = { tail: new Float32Array(delay) };
+  let rest = Buffer.alloc(0);
+  for await (const chunk of dec.stdout) {
+    const b = rest.length ? Buffer.concat([rest, chunk]) : chunk, n = b.length - (b.length % 4);
+    rest = b.subarray(n);
+    const y = removeLoop(new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + n)), delay, gain, state);
+    if (!enc.stdin.write(Buffer.from(y.buffer, y.byteOffset, y.byteLength))) await once(enc.stdin, 'drain');
+  }
+  enc.stdin.end();
+  await once(enc, 'close');
+}
+
+const LOOP_HELP = `What is recorded is also being played back into the recorder, so every sound returns after a fixed
+delay, again and again: tones never die away and the level keeps climbing. Usual cause: the recorder
+plays its input through the Mac's output (QuickTime: the volume slider in the recording window) while
+that output is BlackHole. Set that slider to zero for a clean recording.`;
 
 const DROPPED_HELP = `The recorder lost small blocks of sound and joined the rest: the recording runs short, and each join
 is a click that breaks the engine's rhythm and colours its tone. It can't be used. ffmpeg's live capture
@@ -110,7 +148,7 @@ function checkAlignment(file, from, to) {
   return { ...alignToBoundaries(noveltyCurve(frames, ALIGN_HOP), ALIGN_HOP, boundaries, { from, to }), boundaries: boundaries.length, peak };
 }
 
-function main() {
+async function main() {
   if (!has('ffmpeg', '-version')) { console.error('ffmpeg not found: brew install ffmpeg'); process.exit(1); }
   mkdirSync(OUT, { recursive: true });
 
@@ -137,6 +175,19 @@ function main() {
     console.error(`${path.basename(source)}: sound was lost during the recording, about ${q.perSecond.toFixed(0)} joins per second, on blocks of ${q.block} samples.\n${DROPPED_HELP}`);
     if (!argv.includes('--force')) process.exit(1);
   } else if (q) console.log(`No lost sound found in ${path.basename(source)}.`);
+  let cleaned = null;
+  if (q?.loop) {
+    console.log(`A feedback loop was found: the recording repeats itself after ${((1000 * q.loop.delay) / q.fs).toFixed(1)} ms (${Math.round(q.loop.similarity * 100)}% alike, loop gain ${q.loop.gain.toFixed(4)}).\n${LOOP_HELP}`);
+    console.log('Removing the loop (subtracting what came back) …');
+    cleaned = path.join(OUT, '_unlooped.wav');
+    await unloop(source, q.fs, q.loop, cleaned);
+    const after = excerpts(cleaned, duration(cleaned)).filter(x => x.length > q.fs).map(x => ({ loop: findLoop(x, q.fs), peak: peakOf(x), clipped: clippedShare(x) }));
+    const left = Math.max(...after.filter(p => Math.abs(p.loop.delay - q.loop.delay) <= 2).map(p => p.loop.similarity), 0);
+    console.log(left < 0.3 ? '  Removed: the sound no longer repeats itself. The clips are cut from the cleaned sound.'
+      : `  WARNING: the sound still repeats itself (${Math.round(left * 100)}% alike): the loop changed during the recording and could not be fully removed.`);
+    source = cleaned;
+    q.peak = Math.max(...after.map(p => p.peak)); q.clipped = Math.max(...after.map(p => p.clipped));
+  }
   if (q && q.clipped > 0.001) {
     console.log(`WARNING: ${(100 * q.clipped).toFixed(1)}% of the samples are clipped (the level was too high): lower the player's volume a little and record again for clean sound.`);
   }
@@ -144,7 +195,9 @@ function main() {
   if (peak > 1) console.log(`The level goes over full scale (×${peak.toFixed(1)}) without being cut off: it is scaled down in the clips.`);
   const length0 = duration(source), clip = manifest.cars[0].end - manifest.cars[0].start;
   if (argv.includes('--check') && length0 < 3 * clip) { // a short test recording: nothing to align
-    console.log(q?.dropped ? 'NOT usable.' : q?.clipped > 0.001 ? 'Usable once the level is lowered.' : 'This recorder and these settings are fine for the whole video.');
+    console.log(q?.dropped ? 'NOT usable.' : q?.loop ? 'Usable (the loop can be removed), but fix the loop for a clean recording.'
+      : q?.clipped > 0.001 ? 'Usable once the level is lowered.' : 'This recorder and these settings are fine for the whole video.');
+    if (cleaned) rmSync(cleaned, { force: true });
     return;
   }
 
@@ -187,7 +240,7 @@ function main() {
     }
   }
 
-  if (argv.includes('--check')) { console.log('Checked only: nothing was cut.'); return; }
+  if (argv.includes('--check')) { console.log('Checked only: nothing was cut.'); if (cleaned) rmSync(cleaned, { force: true }); return; }
 
   // cars past the end of the recording are not in it
   const length = duration(source), cut = manifest.cars.filter(c => !length || c.end + offset <= length + 0.5).length;
@@ -207,7 +260,8 @@ function main() {
     console.log(`  ${path.basename(out)}  (${car.end - car.start} s, ${car.cylinders ?? '?'} cyl, ${car.layout})`);
     made++;
   });
+  if (cleaned) rmSync(cleaned, { force: true });
   console.log(`\n${made} file(s) cut → ${path.relative(ROOT, OUT)}/. Next: npm run eval-dr2`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(e => { console.error(e.message); process.exit(1); });

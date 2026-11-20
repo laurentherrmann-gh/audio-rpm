@@ -123,7 +123,8 @@ YouTube's terms only allow downloading through YouTube's own features, so using 
 BlackHole, then let the script cut it:
 
 1. In **QuickTime Player**: File > New Audio Recording, microphone **BlackHole 2ch** (the arrow next to
-   the record button), then record.
+   the record button), the window's volume slider at zero (it plays the input back, and with BlackHole
+   as output that feeds the recording into itself), then record.
 2. Play the video at 1× from 0:00; stop the recording when it ends; File > Save.
 
 ```sh
@@ -145,6 +146,7 @@ Before cutting anything, fetch-dr2 checks the recording:
 |---|---|---|
 | silence | the Mac was not playing into BlackHole | stops |
 | lost sound | joins that fall on one grid of 2^k samples: a recorder dropping buffers | stops (`--force` to cut anyway) |
+| feedback loop | the recording repeats itself after a fixed delay, the same in three excerpts: the recorder plays its input back into BlackHole (QuickTime: the volume slider of the recording window) | removes it (subtracts what came back: exact for a loop that only delays and scales) and cuts from the cleaned sound |
 | clipping | flat tops at the recording's ceiling | warns |
 | level over full scale | not cut off (AAC keeps it): only loud | scales the clips down |
 | length | the recording ends before the video does | cuts only the cars that are in it |
