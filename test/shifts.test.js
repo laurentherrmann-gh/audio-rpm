@@ -63,15 +63,16 @@ test('the gear is counted from 1st, sure once the car has been standing, and kep
   assert.equal(d.state().shifts, 8);
 });
 
-test('never seen standing: the count is the lowest gear it can be, right after a pass through 1st, sure after a run up the box', () => {
+test('never seen standing: the count is the lowest gear it can be, right after a pass through 1st, and never called sure', () => {
   const step = (levels, each = 1) => t => levels[Math.min(levels.length - 1, Math.floor(t / each))];
   // heard from 3rd gear on: down, down (now really in 1st), then up, up
   const mid = run(step([4000, 5200, 6800, 5200, 4000]), 5, { idle: 900, redline: 9000, maxGear: 5 });
   assert.deepEqual(mid.out.map(e => e.gear), [1, 1, 2, 3]);
   assert.equal(mid.d.state().sure, false);
-  // four upshifts with 5 gears: it can only be 5th
+  // four upshifts with 5 gears: the count is at the top, but shifts are missed and invented on real
+  // sound, so that is not being sure
   const up = run(step([8600, 6700, 5200, 4100, 3200]), 5, { idle: 900, redline: 9000, maxGear: 5 });
-  assert.deepEqual(up.out.map(e => [e.gear, e.sure]), [[2, false], [3, false], [4, false], [5, true]]);
+  assert.deepEqual(up.out.map(e => [e.gear, e.sure]), [[2, false], [3, false], [4, false], [5, false]]);
 });
 
 test('standing is seen through stray readings and short holes (a real idle), not through wandering or high revs', () => {

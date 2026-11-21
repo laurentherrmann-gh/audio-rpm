@@ -51,13 +51,14 @@ export class ShiftDetector {
   constructor(cfg = {}) {
     this.p = { ...SHIFT, ...cfg.thresholds }; // thresholds: for measuring other values (tools), not a setting
     this.idle = 900; this.redline = 7500; this.maxGear = this.p.maxGear;
-    // The gear is counted from 1st, with the highest gear it could be (`top`) beside it. The count is
-    // the lowest gear the car can be in: right from the start when the page was started before the
-    // car set off (a stage begins standing), and right after the car's next pass through 1st
-    // otherwise. It is sure once the car has been seen standing, or once count and top have met
-    // (the car went all the way up the gearbox). It used to be unknown until the car was seen
-    // standing, and on real driving that often never came: no gear at all.
-    this.gear = 1; this.top = this.maxGear; this.count = 0; this.last = null;
+    // The gear is counted from 1st from the first moment. The count is the lowest gear the car can
+    // be in: right from the start when the page was started before the car set off (a stage begins
+    // standing), and right after the car's next pass through 1st otherwise. It is `sure` once the
+    // car has been seen standing. It used to be unknown until then, and on real driving that often
+    // never came: no gear at all. (For a while it also counted as sure once the count had reached
+    // the top gear: with a voice mixed into the sound, false shifts took it there on 41 of the 80 clips.)
+    this.gear = 1; this.count = 0; this.last = null;
+    this.stoodAt = null; // when the car was last seen standing (s), null if never
     this.set(cfg);
     this.clear();
   }
@@ -66,16 +67,11 @@ export class ShiftDetector {
     if (thresholds) this.p = { ...SHIFT, ...thresholds };
     if (idle) this.idle = idle;
     if (redline) this.redline = redline;
-    if (maxGear && maxGear !== this.maxGear) {
-      const sure = this.gear === this.top;
-      this.maxGear = maxGear;
-      this.gear = Math.min(this.gear, maxGear);
-      this.top = sure ? this.gear : maxGear;
-    }
+    if (maxGear) { this.maxGear = maxGear; this.gear = Math.min(this.gear ?? 1, maxGear); }
   }
 
   /** Another car: its gear is not known until it has been seen standing. */
-  forget() { this.gear = 1; this.top = this.maxGear; this.clear(); }
+  forget() { this.gear = 1; this.stoodAt = null; this.clear(); }
 
   /** Forget the rpm history (the rpm scale changed, or the sound stopped); the gear is kept. */
   clear() { this.hist = []; this.standAt = -Infinity; this.lastAt = -Infinity; }
@@ -144,9 +140,8 @@ export class ShiftDetector {
     const dir = step < 0 ? 'up' : 'down'; // revs drop = gear up
     const by = dir === 'up' ? 1 : -1;
     this.gear = Math.max(1, Math.min(this.maxGear, this.gear + by));
-    this.top = Math.max(this.gear, Math.min(this.maxGear, this.top + by));
     this.count++;
-    this.last = { t, at, dir, ratio: Math.exp(step), gear: this.gear, sure: this.gear === this.top };
+    this.last = { t, at, dir, ratio: Math.exp(step), gear: this.gear, sure: this.stoodAt !== null };
     return this.last;
   }
 
@@ -175,9 +170,9 @@ export class ShiftDetector {
     if (mid >= Math.log(Math.max(p.standRevs * this.idle, p.standRed * this.redline))) return;
     let near = 0;
     for (const x of xs) if (Math.abs(x - mid) <= band) near++;
-    if (near >= p.standShare * n) this.gear = this.top = 1;
+    if (near >= p.standShare * n) { this.gear = 1; this.stoodAt = t; }
   }
 
   /** gear: counted from 1st; sure: false while the car could be in a higher gear than counted. */
-  state() { return { gear: this.gear, sure: this.gear === this.top, shifts: this.count, last: this.last }; }
+  state() { return { gear: this.gear, sure: this.stoodAt !== null, stoodAt: this.stoodAt, shifts: this.count, last: this.last }; }
 }

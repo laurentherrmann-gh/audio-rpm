@@ -59,7 +59,7 @@ export function scoreRecording({ fs, samples, rows, meta = {}, cfg = {}, prepare
   const truth = truthOf(rows), steps = [], live = [];
   let seen = null;
   replay(samples, fs, { cylinders: meta.cylinders ?? 'auto', idle: meta.idleRpm || 900, redline: meta.maxRpm || 7500, maxGear: meta.maxGears || 6, carKey: meta.carKey ?? null, ...cfg }, (t, r) => {
-    steps.push({ t, at: r.fused.at ?? t, f: r.fused.rpm || 0, pd: r.pd?.rpm || 0, gy: r.gyro?.rpm || 0, gear: r.gear.gear, sure: r.gear.sure, locked: r.cyl?.locked ?? null });
+    steps.push({ t, at: r.fused.at ?? t, f: r.fused.rpm || 0, pd: r.pd?.rpm || 0, gy: r.gyro?.rpm || 0, gear: r.gear.gear, sure: r.gear.sure, stood: r.gear.stoodAt != null, locked: r.cyl?.locked ?? null });
     const e = r.gear.last;
     if (e && e !== seen) { seen = e; live.push({ at: e.at, t: e.t, dir: e.dir, ratio: e.ratio }); }
   }, 256, prepare);
@@ -80,7 +80,7 @@ export function scoreRecording({ fs, samples, rows, meta = {}, cfg = {}, prepare
   const gear = { n: 0, right: 0, sureN: 0, sureRight: 0 };
   let stoodLive = null;
   for (const s of steps) {
-    if (s.sure && stoodLive === null) stoodLive = s.t;
+    if (s.stood && stoodLive === null) stoodLive = s.t;
     const tr = truth.rpm(s.at - delay);
     if (tr > 0) {
       const a = truth.rpm(s.at - delay - 0.05), b = truth.rpm(s.at - delay + 0.05), moving = a > 0 && b > 0 && Math.abs(Math.log(b / a)) / 0.1 > 0.75;

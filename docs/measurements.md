@@ -510,8 +510,7 @@ showed no gear at all. The gear is now counted from 1st from the first moment,
 with the highest gear it could be kept beside it. The count is the lowest gear the car can be in:
 it is right from the start when the page was started before the car set off, and right after the
 car's next pass through 1st otherwise (the count cannot go below 1, so it catches up there). It is
-shown as sure once the car has been seen standing, or once the count and the highest possible gear
-have met (the car went all the way up the gearbox); until then the tach shows it dim, as "2?".
+shown as sure once the car has been seen standing; until then the tach shows it dim, as "2?".
 SimHub gets the count either way.
 
 **Seeing the car stand.** The car is seen standing when, over
@@ -539,9 +538,86 @@ What this means for the gear on the tach: on a real stage it is right after a st
 next few shifts, then drifts: one shift in six is missed, one reported shift in fourteen is false,
 and revving in neutral still gives a few. All clean shifts are found on 36 of the 74 cars that have
 any; the worst are the Audi quattro S1 E2 (3 of 6), the Ford Mustang GT4 and the Fiesta Rallycross
-Mk7 (4 of 7). A count cannot correct itself. The way to a gear that can is each gear pair's own
-ratio (×0.69 for 1→2, ×0.83 for 4→5 in the simulation): at 3% the ratios are getting measured well
-enough to try it; it is not built.
+Mk7 (4 of 7). A count cannot correct itself.
+
+### Can the ratio of a shift say which gears it was between? No.
+
+The idea was that each pair of gears has its own ratio (×0.69 for 1→2 and ×0.83 for 4→5 in the
+simulation), so that a shift's ratio would name the pair and correct the count. It was looked at on
+the real cars before building it, and their gearboxes do not allow it. The 281 clean upshifts of
+the 80 clips:
+
+| upshift ratio | 10% below | 25% below | median | 75% below | 90% below |
+|---|---|---|---|---|---|
+| | ×0.69 | ×0.72 | ×0.76 | ×0.79 | ×0.85 |
+
+Half of all upshifts are between ×0.72 and ×0.79, and within one car the pairs are closer still.
+Runs up the box, as the reference reads them: Citroën C4 Rally ×0.73, 0.73, 0.75, 0.79; Audi S1 EKS
+RX ×0.75, 0.76, 0.76; Opel Corsa S1600 ×0.77, 0.76, 0.78; BMW M2 ×0.73, 0.79, 0.80, 0.83. Rally
+gearboxes are stepped evenly, on purpose. Neighbouring pairs differ by 1 to 4%, and a live shift's
+ratio is off by 3.3% (median): one shift says nothing, and the some twenty shifts of the same pair
+it would take to tell them apart never come without a missed or false shift in between. Not built.
+
+A second cue was looked at in the same clips: how fast the revs rise in each gear. In 1st they
+rise several times faster than in 4th (Citroën C4 Rally: 0.55, 0.43, 0.28, 0.19, 0.09 per second,
+in log rpm, through one run up the box). Over 207 pairs of consecutive gears the rise falls to
+×0.69 from one gear to the next (median), but it is between ×0.45 and ×1.04 for the middle half and
+does not fall at all in a third of the pairs: throttle, grip and slope are in it too. It could
+tell 1st from the higher gears; whether it can do more needs the true gear beside the sound, which
+the clips do not have and a recording with telemetry does (`npm run record`). Not built either,
+until there is one.
+
+## What a stage adds: a voice and the road
+
+Everything above is measured on the engine alone. On a stage a co-driver calls the notes over it
+and the road hisses under it, and there is no recording of that with a truth to score against. So
+both are made (`tools/lib/mix.js`: a voice at 95 to 180 Hz with harmonics and formants, speaking 42%
+of the time; noise that is strongest below 2 kHz, with gravel hits) and mixed into the 80 clean
+clips, whose reference stays the truth:
+
+```sh
+npm run eval-rpm -- --mix speech:-6,road:-10
+npm run eval-shifts -- --mix speech:-6,road:-10
+```
+
+Levels are against the engine: the clip's loudness as a whole for the voice (a co-driver does not
+speak softer when the engine idles), the engine's loudness of the moment for the road (a standing
+car makes no road noise).
+
+| mixed into the 80 clips | combined rpm right | steady | moving | pitch-detection | gyroball | clean shifts found | reported shifts false | car seen standing |
+|---|---|---|---|---|---|---|---|---|
+| nothing | 92% | 96% | 72% | 84% | 75% | 309 of 363 (85%) | 7% | 34 clips |
+| road, 10 dB under the engine | 90% | 95% | 66% | 79% | 76% | 299 (82%) | 8% | 38 |
+| voice, 10 dB under | 90% | 94% | 68% | 81% | 75% | 288 (79%) | 9% | 30 |
+| voice 6 dB under and road 10 dB under | 86% | 91% | 59% | 75% | 75% | 259 (71%) | 13% | 29 |
+| voice as loud as the engine | 81% | 86% | 59% | 73% | 70% | 221 (61%) | 21% | 24 |
+| road as loud as the engine | 76% | 84% | 35% | 19% | 71% | not run | | |
+
+What it says:
+
+- **Up to 10 dB under the engine, either sound costs 2 points of rpm** and a few shifts. The
+  detectors are not fragile.
+- **The voice is what hurts the gear.** A voice's pitch sits where a four-cylinder's firing tone is
+  between 2,900 and 5,400 rpm, and it is as periodic as an engine: for the length of a syllable the
+  rpm follows it. With the voice as loud as the engine a quarter of the shifts are lost and one
+  reported shift in five is false, three times as many as without. If the gear matters more than
+  hearing the notes at full volume, the game's speech volume is the setting to lower.
+- **Noise takes pitch-detection, not gyroball.** With the road as loud as the engine,
+  pitch-detection is right 19% of the time and gyroball 71%, almost what it is on the clean clips:
+  a comb over a 170 ms spectrum does not mind broadband noise, a period search over a few cycles
+  does. The combined rpm keeps 76%, more than either. This is the best argument so far for running
+  both.
+- **Giving gyroball more say against the voice was tried** (its weight on the path from 0.8 to 0.9
+  and 1): nothing moved, on 18 cars. During a syllable gyroball is on the voice too. Telling a
+  voice from an engine needs more than the path; it is not built.
+
+These are stand-ins. The numbers say how the detectors degrade and what to protect them from, not
+what a real stage scores: that takes a recording with the game's telemetry (`npm run record`).
+
+One fault was found on the way and removed. For a short while the gear counted as sure once the
+count had reached the top gear, without the car having been seen standing. With the voice as loud
+as the engine, false shifts took the count there on 41 of the 80 clips. Sure now means seen
+standing, nothing else.
 
 ## Car recognition
 

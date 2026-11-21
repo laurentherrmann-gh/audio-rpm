@@ -48,6 +48,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | Cylinder count from the sound | 72 of 80 cars right, 8 undecided, none wrong |
 | Car recognised from its sound | 72 of 82 right, 1 wrong, 9 not sure |
 | Gear shifts | 85% of the clean shifts found, 7% of the reported ones false: the counted gear drifts after a few shifts |
+| With a co-driver's voice and road noise mixed in (made up, not the game's) | RPM right 86% with the voice 6 dB and the road 10 dB under the engine; shifts 71% found, 13% false. The voice is what costs: lower the game's speech volume if the gear matters |
 
 ## Commands
 

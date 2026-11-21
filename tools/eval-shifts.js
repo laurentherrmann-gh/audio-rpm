@@ -114,7 +114,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const key = slug(car.car), maps = learned?.cars[key]?.tones;
     replay(heard, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null), ...trial }, (t, r) => {
       const e = r.gear?.last;
-      if (r.gear?.sure && stoodAt === null) stoodAt = t;
+      if (r.gear?.stoodAt != null && stoodAt === null) stoodAt = t;
       if (e && e !== last) { last = e; live.push({ at: e.at, t: e.t, dir: e.dir, ratio: e.ratio }); }
     }, 256, pipe => { if (maps?.length) pipe.tones = { [key]: maps }; });
     const used = new Set(), found = [], missed = [];
@@ -136,7 +136,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const lines = [
     `# DiRT Rally 2.0 cars: are gear shifts found? ${new Date().toISOString().slice(0, 10)}${mix ? ` · with stage sound mixed in (${mix})` : ''}`, '',
     `${rows.length} cars, cylinder count set by hand. "Clean shifts" are taken from the offline reference rpm: the revs hold, step by a gear's worth within 0.3 s, and hold again. Every other live shift is checked against the reference at that moment: real (the revs did step that way), false (they did not), or not judged (the reference is unsure there).`, '',
-    `**${F} of ${T} clean shifts found (${T ? Math.round((100 * F) / T) : 0}%). Live shifts: ${F + A} real, ${X} false (${F + A + X ? Math.round((100 * X) / (F + A + X)) : 0}%), ${U} not judged**${delay !== null ? `; reported a median ${Math.round(delay * 1000)} ms after the shift; ratio off by a median ${(100 * ratioErr).toFixed(1)}%` : ''}. The car is seen standing (the gear is sure from there) on ${rows.filter(r => r.stoodAt !== null).length} of the ${rows.length} clips, on ${rows.filter(r => r.stoodAt !== null && r.stoodAt < 3).length} within 3 s.`, '',
+    `**${F} of ${T} clean shifts found (${T ? Math.round((100 * F) / T) : 0}%). Live shifts: ${F + A} real, ${X} false (${F + A + X ? Math.round((100 * X) / (F + A + X)) : 0}%), ${U} not judged**${delay !== null ? `; reported a median ${Math.round(delay * 1000)} ms after the shift; ratio off by a median ${(100 * ratioErr).toFixed(1)}%` : ''}. The car is seen standing on ${rows.filter(r => r.stoodAt !== null).length} of the ${rows.length} clips, on ${rows.filter(r => r.stoodAt !== null && r.stoodAt < 3).length} within 3 s.`, '',
     '| # | car | cyl | clean shifts | found | missed | other live: real | false | not judged |', '|---|---|---|---|---|---|---|---|---|',
     ...rows.map(r => `| ${r.n} | ${r.car} | ${r.cylinders} | ${r.truth} | ${r.found.length} | ${r.missed.length} | ${r.alsoTrue} | ${r.falseOnes.length} | ${r.unjudged} |`),
   ];

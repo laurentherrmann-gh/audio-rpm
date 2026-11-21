@@ -54,10 +54,14 @@
   longer gap taking a lift for a shift. Anything that changes the combined rpm changes the shifts:
   re-run eval-shifts after touching the path, its look-backs or the detectors.
   The gear is counted from 1st from the start (the lowest gear it can be), and is `sure` once the car
-  was seen standing or the count met the highest possible gear; it must never go back to showing no
-  gear at all.
+  was seen standing; it must never go back to showing no gear at all.
   eval-shifts does not test the gear becoming known: the car stands for a second in only 3 of the 80
   clips (12 Sierra RS500, 55 Camaro, 56 Mustang GT4). That is tested in `test/shifts.test.js` (a real
   idle: stray readings, holes, readings 65 ms old); it broke once without any measured number moving.
+- The clips are the engine alone. `--mix speech:-6,road:-10` (eval-rpm, eval-shifts; `tools/lib/mix.js`) adds
+  a made-up co-driver's voice and road noise to what the detectors hear, the reference staying the
+  clean clip's: use it to check that a change does not only work on clean sound (table in
+  `docs/measurements.md`, "What a stage adds"). The real test is a recording with the game's
+  telemetry: `npm run record` (PC version), scored by `npm run eval-recording`.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

@@ -10,6 +10,9 @@
 //           A voice's pitch sits where a four-cylinder's firing tone is at 2,900–5,400 rpm, and it is
 //           periodic: this is the sound a pitch detector can mistake for the engine.
 //   road    broadband noise, strongest below 2 kHz, swelling and fading, with gravel hitting the car.
+//           It follows the engine's own loudness (a car that stands makes no road noise, and the
+//           idle is some 9 dB quieter than the clip as a whole): "road:-10" is 10 dB under the
+//           engine at every moment. The voice does not: a co-driver counts down over an idling engine.
 // Everything is seeded: the same clip gets the same sound every run.
 
 /** Small seeded generator (mulberry32): () => [0, 1). */
@@ -84,11 +87,21 @@ export function road(n, fs, seed = 2) {
 }
 
 const KINDS = { speech, road };
+const FOLLOWS = { road: true }; // sounds whose level follows the engine's from moment to moment
+
+/** The clip's loudness over time: rms per quarter second, smoothed, as a per-sample function. */
+function envelope(x, fs) {
+  const B = Math.floor(fs / 4), n = Math.ceil(x.length / B), e = new Float64Array(n);
+  for (let b = 0; b < n; b++) { let s = 0, c = 0; for (let i = b * B; i < Math.min(x.length, (b + 1) * B); i++) { s += x[i] * x[i]; c++; } e[b] = Math.sqrt(s / Math.max(1, c)); }
+  const sm = e.map((_, b) => (e[Math.max(0, b - 1)] + e[b] + e[Math.min(n - 1, b + 1)]) / 3);
+  return i => { const u = i / B - 0.5, a = Math.max(0, Math.min(n - 1, Math.floor(u))), b = Math.min(n - 1, a + 1), w = Math.max(0, Math.min(1, u - a)); return sm[a] + w * (sm[b] - sm[a]); };
+}
 const rmsOf = (x, on) => { let s = 0, c = 0; for (let i = 0; i < x.length; i++) if (!on || on[i]) { s += x[i] * x[i]; c++; } return Math.sqrt(s / Math.max(1, c)); };
 
 /**
  * Mix stage sounds into a clip. spec: "speech:0,road:-6" — each sound's level in dB against the
- * clip's own rms (0 = as loud as the engine; speech is measured while it speaks).
+ * engine: the clip's rms as a whole for the voice (measured while it speaks), the engine's
+ * loudness of the moment for the road.
  * @returns {Float32Array} a new array; the clip is not changed
  */
 export function mixIn(samples, fs, spec, seed = 1) {
@@ -96,8 +109,9 @@ export function mixIn(samples, fs, spec, seed = 1) {
   for (const part of String(spec).split(',').filter(Boolean)) {
     const [kind, db = '0'] = part.split(':'), make = KINDS[kind];
     if (!make) throw new Error(`mix: unknown sound "${kind}" (known: ${Object.keys(KINDS).join(', ')})`);
-    const { x, active } = make(samples.length, fs, seed * 7919 + kind.length), gain = (engine * 10 ** (Number(db) / 20)) / (rmsOf(x, active) || 1);
-    for (let i = 0; i < out.length; i++) out[i] += gain * x[i];
+    const { x, active } = make(samples.length, fs, seed * 7919 + kind.length), unit = 10 ** (Number(db) / 20) / (rmsOf(x, active) || 1);
+    if (FOLLOWS[kind]) { const env = envelope(samples, fs); for (let i = 0; i < out.length; i++) out[i] += unit * env(i) * x[i]; }
+    else for (let i = 0; i < out.length; i++) out[i] += unit * engine * x[i];
   }
   return out;
 }
