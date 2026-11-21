@@ -60,12 +60,20 @@ export const DEFAULTS = Object.freeze({
   // firingConfirm: s a correction must last before it is used, unless it lands where this detector
   // already was (firingKeep: for how long that counts). A short wrong one costs seconds: the
   // combined rpm takes the true reading that follows for a slip to half.
-  firingMargin: 3, firingClear: 5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  // firingOver: dB by which a multiple that is twice an accepted one must beat it (fours and V8s: it
+  // could be its second harmonic; on sixes the tone an octave below the firing tone is strong by
+  // nature, so none is asked). firingSwitch: s a correction must last when the pitch as found
+  // continues this detector's own track (then a louder multiple is more likely a harmonic).
+  firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
   // the same lag and error as every 20 ms (measured), for four times the work
   gyro: { enabled: true, fft: 8192, tuned: true, mode: 'auto', every: 0.02 },
-  pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012 },
+  // Second try, when the short window finds nothing (real engines: see stepPd). clarity: the least
+  // YIN clarity it accepts (0 = no second try). cycles: its window, in engine cycles, when the
+  // cylinder count is known (at most maxWinCycles s). follow: a second-try reading must lie within
+  // these factors of the tracked rpm.
+  pd: { enabled: true, algo: 'yin', maxWin: 0.085, adaptive: true, periods: 2.5, minWin: 0.012, cycles: 2.2, maxWinCycles: 0.13, clarity: 0.5, follow: [0.7, 1.4] },
   // confirm: a rejected new level is accepted after it persists confirmBaseMs + confirmWin × ½ window
   // (measured: the fastest rule gives the least error and the fewest glitches, once the detector
   // itself rejects smeared readings)
@@ -399,14 +407,15 @@ export class Pipeline {
       for (let i = a; i <= b; i++) if (db[i] > m) m = db[i];
       return m;
     };
-    let best = f0, top = level(f0) + margin;
+    let best = f0, top = level(f0), taken = 1;
     for (let m = 2; m <= N; m++) {
       if (N % m || f0 * m > fHi) continue;
       const l = level(f0 * m);
-      if (l <= top) continue;
+      // twice a multiple that was already taken could be its second harmonic: it must beat it by more
+      if (l <= top + (taken === 1 ? margin : m === 2 * taken && N % 3 ? this.cfg.firingOver : 0)) continue;
       let between = -Infinity;
       for (let k = m + 1; k < 2 * m; k++) between = Math.max(between, level(f0 * k));
-      if (l - between >= clear) { top = l; best = f0 * m; }
+      if (l - between >= clear) { top = l; best = f0 * m; taken = m; }
     }
     if (best === f0) {
       if (!known || close(f0, st.f)) { st.f = f0; st.at = tEnd; }
@@ -416,7 +425,13 @@ export class Pipeline {
       const p = st.pending;
       if (!p || tEnd - p.at > this.cfg.firingGap || !close(best, p.f)) st.pending = { since: tEnd, at: tEnd, f: best };
       else { p.f = best; p.at = tEnd; }
-      if (tEnd - st.pending.since < firingConfirm) return f0;
+      // the pitch as found continues this detector's own track: then the louder multiple is more
+      // likely a harmonic that got loud than a firing tone that was missed all along
+      const onTrack = known && close(f0, st.f);
+      if (tEnd - st.pending.since < (onTrack ? this.cfg.firingSwitch : firingConfirm)) {
+        if (onTrack) { st.f = f0; st.at = tEnd; }
+        return f0;
+      }
     }
     st.pending = null; st.f = best; st.at = tEnd;
     return best;
@@ -455,16 +470,40 @@ export class Pipeline {
     }
     // short windows: full-rate stream (cheap at that length, and exact for high tones)
     const full = p.algo !== 'hps' && winS <= FULL_RATE_WIN;
-    const fs = full ? this.fs : this.fsDec, ring = full ? this.raw : this.dec;
+    let fs = full ? this.fs : this.fsDec;
+    const ring = full ? this.raw : this.dec;
     let N = Math.round(winS * fs);
     if (p.algo === 'hps') N = 2 ** Math.round(Math.log2(p.maxWin * fs)); // HPS needs a power of 2
     N = Math.min(N, ring.size);
     const frame = ring.latest(N, this.buf(full ? 'pfr' : 'pf', N));
     const { fLo, fHi } = this.band();
-    const r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi });
+    let r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi });
+    let second = false; // the reading comes from the second try below
+    if (!r.valid && p.algo === 'yin' && p.clarity) {
+      // Nothing in the short window. On many real engines one firing period does not repeat the last
+      // one closely enough (the cylinders don't sound alike); what repeats is the whole cycle.
+      const known = !(this.cfg.cylinders === 'auto' && this.carCyl === null);
+      if (known && p.cycles && fNow) {
+        // count known: a window that holds the cycle twice, so that YIN can find the cycle itself
+        // (firingTone then turns it into the firing tone). Slower, so only when the short one fails.
+        const longS = Math.min(p.maxWinCycles, (p.cycles * cyl) / fNow);
+        if (longS > winS) {
+          const n = Math.min(Math.round(longS * this.fsDec), this.dec.size);
+          const again = detectPitch(this.dec.latest(n, this.buf('pfl', n)), { fs: this.fsDec, algo: p.algo, fLo, fHi, clarity: p.clarity });
+          if (again.valid) { r = again; N = n; fs = this.fsDec; second = true; }
+        }
+      } else if (!known) {
+        // count being detected: the best period the short window has, if it is clear enough
+        const again = detectPitch(frame, { fs, algo: p.algo, fLo, fHi, clarity: p.clarity });
+        if (again.valid) r = again;
+      }
+    }
     this.detectCyl(tEnd);
     if (r.valid) r.f0 = this.firingTone('pd', r.f0, tEnd);
-    const raw = r.valid ? rpmFromFiringHz(r.f0, this.cylinders()) * this.cfg.scale.pd : null;
+    let raw = r.valid ? rpmFromFiringHz(r.f0, this.cylinders()) * this.cfg.scale.pd : null;
+    // A second-try reading may continue the track (through a shift too), not start a new level: in a
+    // shift or a lift the firing tone fades, the cycle is all that is found, and it would read a quarter.
+    if (raw !== null && second && r.clarity < 0.85 && tr.x !== null && (raw < p.follow[0] * tr.x || raw > p.follow[1] * tr.x)) { raw = null; r.valid = false; }
     const res = this.finish('pd', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `clarity ${r.clarity.toFixed(2)}` : '', winMs: (N / fs) * 1000,
     });

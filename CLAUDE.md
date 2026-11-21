@@ -29,9 +29,11 @@
   or the fusion, and update the table in `docs/measurements.md` ("Is the rpm right?"). A change that helps one car
   can cost another: compare the per-car table in `samples/dr2/results-rpm.md` before and after.
 - `public/fusion.js` makes the combined rpm (tach, SimHub and shift detection use it). Its rules come
-  from one real clip (DS 21); re-measure on real clips before changing them, not on the simulator.
+  from real clips (DS 21, then all 80 cars with `npm run eval-rpm`); re-measure on real clips before
+  changing them, not on the simulator. The simulator's default engine is too clean to show what real
+  cars do: `synthesize(..., { cycleLevel: 0.3 })` gives cylinders that don't sound alike.
 - Shift and gear detection is `public/detectors/shifts.js` (thresholds in `SHIFT`), fed by
-  the combined rpm in the pipeline; `npm run bench -- --shifts` measures it. Also tuned
-  on the simulator only.
+  the combined rpm in the pipeline; `npm run bench -- --shifts` measures it. Tuned on the simulator and
+  one real clip (DS 21); not yet measured on the other cars.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

@@ -58,3 +58,24 @@ test('silence gives no reading', () => {
   const db = new Float32Array(4096).fill(-Infinity);
   assert.equal(analyseSpectrum(db, 48000 / 8192, { fLo, fHi }).valid, false);
 });
+
+test('YIN with the deepest-dip fallback: same answer as the package on a clean tone, an answer with its clarity where the package has none', async () => {
+  const { yinDip } = await import('../public/detectors/pd-core.js');
+  const { default: yin } = await import('pitch-detection/yin.js');
+  const fs = 12000, n = 1024;
+  const clean = Float32Array.from({ length: n }, (_, i) => Math.sin((2 * Math.PI * 110 * i) / fs) + 0.4 * Math.sin((2 * Math.PI * 220 * i) / fs));
+  const a = yin(clean, { fs }), b = yinDip(clean, fs);
+  assert.ok(Math.abs(a.freq - b.freq) < 1e-9 && Math.abs(a.clarity - b.clarity) < 1e-9);
+  // every second period a different shape and loudness, as cylinders that don't sound alike: 110 Hz
+  // pulses, 55 Hz repeat. A window too short for the 55 Hz period has no dip below YIN's threshold.
+  let s = 5;
+  const rand = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff) * 2 - 1;
+  const uneven = Float32Array.from({ length: 420 }, (_, i) => {
+    const t = i / fs, k = Math.floor(t * 110) % 2;
+    return (k ? 1 : 0.55) * Math.sin(2 * Math.PI * 110 * t) + (k ? 0.5 : -0.3) * Math.sin(2 * Math.PI * 330 * t) + 0.05 * rand();
+  });
+  assert.equal(yin(uneven, { fs }), null);
+  const r = yinDip(uneven, fs);
+  // near the pulse rate, not on it: over so short a window the spacing of two unlike pulses is not the mean period
+  assert.ok(r && Math.abs(r.freq / 110 - 1) < 0.15 && r.clarity < 0.85 && r.clarity > 0.3, `${r?.freq} Hz, clarity ${r?.clarity}`);
+});

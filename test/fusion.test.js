@@ -56,3 +56,19 @@ test('pitch-detection silent: gyroball takes over after a moment, and nothing at
   assert.equal(at(none, 1.1).coast, true);
   assert.equal(at(none, 1.6).rpm, null);
 });
+
+test('pitch-detection alone jumping up an octave is not followed: revs cannot double between two readings', () => {
+  // real case (Peugeot 205 GTI): pitch slips onto the second harmonic for 0.1 s while gyroball stays put
+  const pd = t => (t >= 1 && t < 1.1 ? 2 : 1) * (4200 + 400 * t), gyro = t => 4200 + 400 * t;
+  const out = run(pd, gyro, 3);
+  assert.ok(out.every(o => o.rpm === null || Math.abs(o.rpm / gyro(o.t) - 1) < 0.02), 'never at twice the revs, during or after');
+  assert.ok(at(out, 1.05).source.includes('÷2'));
+});
+
+test('…but it is followed at once when gyroball reads the higher value too, and after upHold on its own', () => {
+  const both = run(t => (t >= 1 ? 8000 : 4000), t => (t >= 1 ? 8000 : 4000), 2);
+  assert.ok(Math.abs(at(both, 1.05).rpm - 8000) < 1);
+  const alone = run(t => (t >= 1 ? 8000 : 4000), () => null, 3);
+  assert.ok(Math.abs(at(alone, 1 + FUSION.upHold / 2).rpm - 4000) < 1);
+  assert.ok(Math.abs(at(alone, 1 + FUSION.upHold + 0.05).rpm - 8000) < 1);
+});

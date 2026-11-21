@@ -71,3 +71,20 @@ test('left alone while the cylinder count is being detected, without a spectrum,
   spectrum(pipe, tones, 0);
   assert.equal(pipe.firingTone('pd', 80, 1), 80, 'spectrum too old');
 });
+
+test('twice an accepted multiple could be its second harmonic: a four asks 3 dB more, a six does not', () => {
+  // pitch on the crank tone (80 Hz), firing tone 160 Hz, second harmonic 320 Hz 2 dB louder
+  const tones = { 80: -40, 160: -22, 240: -45, 320: -20, 400: -45, 480: -44, 560: -46 };
+  assert.equal(listen(new Pipeline(48000, 1, { cylinders: 4, idle: 800, redline: 12000 }), 80, tones, 0.4), 160);
+  // a six: pitch on the cycle (30 Hz), half-firing tone 90 Hz, firing tone 180 Hz 2 dB louder
+  const six = { 30: -40, 60: -45, 90: -22, 120: -45, 150: -45, 180: -20, 210: -45, 240: -45, 270: -44, 300: -45, 330: -45 };
+  assert.equal(listen(new Pipeline(48000, 1, { cylinders: 6, idle: 800, redline: 9000 }), 30, six, 0.4), 180);
+});
+
+test('a correction away from a pitch that continues the track must last firingSwitch, not just firingConfirm', () => {
+  const pipe = four();
+  const firing = { 160: -20, 320: -30, 480: -40 }, loudSecond = { 160: -26, 320: -20, 480: -40 };
+  listen(pipe, 160, firing, 0.3);
+  assert.equal(listen(pipe, 160, loudSecond, DEFAULTS.firingSwitch * 0.6, 0.3), 160, 'a second harmonic that got loud for a moment');
+  assert.equal(listen(pipe, 160, loudSecond, DEFAULTS.firingSwitch + 0.2, 0.3 + DEFAULTS.firingSwitch * 0.6), 320, 'kept up: the track was on half the firing tone');
+});

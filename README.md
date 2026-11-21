@@ -39,10 +39,10 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 
 | | result |
 |---|---|
-| RPM, car picked | right (within 6%) 78% of the scored time; most of the rest is lag while the revs jump |
-| Cylinder count from the sound | 66 of 80 cars right, 14 undecided, none wrong |
+| RPM, car picked | right (within 6%) 82% of the scored time, 90% while the revs are steady; most of the rest is lag while they jump |
+| Cylinder count from the sound | 73 of 80 cars right, 7 undecided, none wrong |
 | Car recognised from its sound | 72 of 82 right, 1 wrong, 9 not sure |
-| Gear shifts | tuned on the simulator only so far |
+| Gear shifts | all found on the simulator; on the one real clip with known shifts, 3 of 3 found plus 3 false |
 
 ## Commands
 

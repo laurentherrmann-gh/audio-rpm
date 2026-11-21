@@ -90,3 +90,18 @@ test('pipeline: a change of cylinder count is not taken for a shift', () => {
   }
   assert.equal(shifts, 0);
 });
+
+test('a shift that arrives in stairs (readings missing in the middle, as on real sound) is one shift', () => {
+  // 6,600 rpm, down to 5,300 in 60 ms, a 60 ms pause there, then on to 4,650: the DS 21 at 20.8 s
+  const rpm = t => (t < 2 ? 6600 : t < 2.06 ? 6600 - (1300 * (t - 2)) / 0.06 : t < 2.12 ? 5300 : t < 2.16 ? 5300 - (650 * (t - 2.12)) / 0.04 : 4650 + 300 * (t - 2.16));
+  const { out } = run(rpm, 4);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].dir, 'up');
+  assert.ok(Math.abs(out[0].at - 2) < 0.05, `starts at ${out[0].at}`);
+  assert.ok(Math.abs(out[0].ratio - 4650 / 6600) < 0.03, `ratio ${out[0].ratio}`);
+});
+
+test('revs that keep falling after a pause for longer than a shift takes are a lift, not a shift', () => {
+  const rpm = t => (t < 2 ? 6600 : t < 2.06 ? 6600 - (1300 * (t - 2)) / 0.06 : t < 2.09 ? 5300 : Math.max(1500, 5300 * Math.exp(-2 * (t - 2.09))));
+  assert.equal(run(rpm, 5).out.length, 0);
+});

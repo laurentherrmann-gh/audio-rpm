@@ -75,7 +75,7 @@ export class ShiftDetector {
       const m = this.move, change = x - m.x0, size = Math.abs(change);
       this.move = null;
       const octave = Math.abs(size - Math.LN2) < SHIFT.octave;
-      if (size >= SHIFT.minChange && size <= SHIFT.maxChange && !octave) this.pending = { dir: m.dir, at: m.t0, tEnd: t, xEnd: x, ratio: Math.exp(change) };
+      if (Math.sign(change) === m.dir && size >= SHIFT.minChange && size <= SHIFT.maxChange && !octave) this.pending = { dir: m.dir, at: m.t0, x0: m.x0, tEnd: t, xEnd: x, ratio: Math.exp(change) };
     }
     return this.confirm(t, x);
   }
@@ -83,7 +83,13 @@ export class ShiftDetector {
   confirm(t, x) {
     const p = this.pending;
     if (!p) return null;
-    if (p.dir * (x - p.xEnd) > SHIFT.holdDrift) { this.pending = null; return null; } // still going: not a step
+    if (p.dir * (x - p.xEnd) > SHIFT.holdDrift) {
+      // Still going. On real sound the readings come down a shift in two or three stairs (the
+      // detector has nothing for a moment in the middle): within a shift's time it is the same step.
+      this.pending = null;
+      if (t - p.at <= SHIFT.maxStep) this.move = { dir: p.dir, t0: p.at, x0: p.x0 };
+      return null;
+    }
     if (t - p.tEnd < SHIFT.hold) return null;
     this.pending = null;
     const dir = p.dir < 0 ? 'up' : 'down'; // revs drop = gear up

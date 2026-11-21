@@ -82,6 +82,8 @@ const lines = [
     return `| ${r.n} | ${r.car} | ${r.cylinders ?? '?'} | ${r.sure}% | ${Object.entries(r.orders).sort((a, b) => b[1] - a[1]).map(([j, s]) => `${j} (${Math.round(s)} s)`).join(', ') || '—'} | ${r.share('fused', 'right')}% | ${r.share('pd', 'right')}% | ${r.share('gyro', 'right')}% | ${worst[1] ? `${worst[0]} ${worst[1]}%` : '—'} |`;
   }),
 ];
-writeFileSync(path.join(dir, auto ? 'results-rpm-auto.md' : 'results-rpm.md'), lines.join('\n') + '\n');
+// a run on a few cars (--only) must not replace the table of all of them
+const outFile = path.join(dir, `results-rpm${auto ? '-auto' : ''}${only ? '-some' : ''}.md`);
+writeFileSync(outFile, lines.join('\n') + '\n');
 console.log('\n' + lines.slice(4, 4 + groups.length * 7).join('\n'));
-console.log(`Wrote ${path.relative(ROOT, path.join(dir, auto ? 'results-rpm-auto.md' : 'results-rpm.md'))}`);
+console.log(`Wrote ${path.relative(ROOT, outFile)}`);

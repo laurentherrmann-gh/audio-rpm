@@ -12,6 +12,11 @@
 //  - and whatever the source, a sudden drop to exactly ½ or ¼ of the output is taken for a slip
 //    and corrected for up to `slipHold` s (long enough for a stay on the limiter). A real shift that
 //    halves the revs exactly would be shown late by that time; gearboxes rarely have one.
+// The 80 real cars added one case: pitch-detection also slips UP an octave, onto the second harmonic
+// of the firing tone, for a moment. Followed, that would make the true readings after it look like a
+// slip to half. So:
+//  - a jump up by exactly an octave or two that only pitch-detection shows is not followed until
+//    gyroball shows it too, or it has lasted `upHold` s.
 export const FUSION = Object.freeze({
   octave: 0.06,   // readings this close to ×2 or ×4 are an octave apart
   confirm: 0.08,  // s an octave relation must last before it is acted on (a falling rev count crosses
@@ -23,6 +28,7 @@ export const FUSION = Object.freeze({
   fastGap: 0.15,  // s without pitch-detection before gyroball is used alone (it lags at a shift)
   coast: 0.3,     // s the last value is held when there is nothing to go on
   memory: 3,      // s the last value still counts as "where the revs were" after the output went blank
+  upHold: 0.5,    // s a jump up by exactly an octave or two is not believed from pitch-detection alone
 });
 
 const near = (a, b, tol) => Math.abs(a / b - 1) <= tol;
@@ -31,7 +37,7 @@ const octaveBelow = (low, high) => [2, 4].find(m => near(low * m, high, FUSION.o
 export class Fusion {
   constructor() { this.reset(); }
 
-  reset() { this.x = null; this.seen = -Infinity; this.fastSeen = -Infinity; this.raise = null; }
+  reset() { this.x = null; this.seen = -Infinity; this.fastSeen = -Infinity; this.raise = null; this.upSince = null; }
 
   /** Nothing new to show: hold the last value for a moment, then show nothing (it is remembered). */
   hold(t) {
@@ -67,6 +73,17 @@ export class Fusion {
     else return this.hold(t);
     let v = c.v;
     const high = sure ? (sure.raw > 0 ? sure.raw : sure.rpm > 0 && !sure.coast ? sure.rpm : null) : null;
+    // A jump up by exactly an octave or two that gyroball does not share: pitch-detection has
+    // slipped onto a harmonic (the second harmonic of the firing tone is the louder one on some real
+    // engines). Revs cannot double between two readings, so the output stays where it was heading
+    // until gyroball reads the higher value too, or the jump has lasted `upHold`.
+    const up = c === a && was !== null ? octaveBelow(was, v) : 0;
+    if (!up) this.upSince = null;
+    else {
+      this.upSince ??= t;
+      const shared = high !== null && near(high, v, 2 * FUSION.octave);
+      if (!shared && t - this.upSince < FUSION.upHold) { v /= up; source += ` ÷${up}`; }
+    }
     // gyroball an octave or two above pitch-detection counts when the revs were up there too, or when
     // there is no history; alone it doesn't (in a wide search band gyroball can also lock too high)
     let pair = c === a && high !== null ? octaveBelow(v, high) : 0;

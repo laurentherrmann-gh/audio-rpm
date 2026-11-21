@@ -42,6 +42,40 @@ function nsdfAt(frame, lag) {
   return e > 0 ? (2 * acf) / e : 0;
 }
 
+/**
+ * YIN (de Cheveigné & Kawahara, 2002), as in the pitch-detection package: the first dip of the
+ * normalized difference below `threshold`. The package gives up when there is none; the paper does
+ * not, and neither does this: it then takes the deepest dip, and the caller decides from the
+ * clarity (1 − depth) whether that is good enough. Real engines need it: their cylinders don't
+ * sound alike, so one firing period never repeats the last one as exactly as a simulated one does.
+ * @returns {{freq:number, clarity:number}|null}
+ */
+export function yinDip(data, fs, threshold = 0.15, minTau = 2) {
+  const half = data.length >> 1;
+  if (half < 8) return null;
+  const c = new Float64Array(half);
+  c[0] = 1;
+  let running = 0;
+  for (let tau = 1; tau < half; tau++) {
+    let sum = 0;
+    for (let i = 0; i < half; i++) { const diff = data[i] - data[i + tau]; sum += diff * diff; }
+    running += sum;
+    c[tau] = running > 0 ? (sum * tau) / running : 1;
+  }
+  let tau = 2;
+  while (tau < half - 1) {
+    if (c[tau] < threshold) { while (tau + 1 < half - 1 && c[tau + 1] < c[tau]) tau++; break; }
+    tau++;
+  }
+  if (tau >= half - 1) { // no dip that deep: the deepest one
+    tau = 0;
+    for (let k = Math.max(2, Math.ceil(minTau)); k < half - 1; k++) if (c[k] <= c[k - 1] && c[k] < c[k + 1] && (!tau || c[k] < c[tau])) tau = k;
+    if (!tau) return null;
+  }
+  const s0 = c[tau - 1], s1 = c[tau], s2 = c[tau + 1], denom = s0 - 2 * s1 + s2;
+  return { freq: fs / (tau + (denom !== 0 ? (s0 - s2) / (2 * denom) : 0)), clarity: 1 - s1 };
+}
+
 // Octave check: engines have strong half orders, so the waveform's full period can be two firing
 // periods and a period detector then reports half the firing frequency. If the frame repeats
 // almost as well at half the detected period, the firing tone is the octave above.
@@ -52,11 +86,11 @@ const OCTAVE_RATIO = 0.8;
  * @param {{fs:number, algo?:string, fLo:number, fHi:number, octaveCheck?:boolean}} opts
  * @returns {{f0:number, clarity:number, valid:boolean}}
  */
-export function detectPitch(frame, { fs, algo = 'mcleod', fLo, fHi, octaveCheck = true }) {
+export function detectPitch(frame, { fs, algo = 'mcleod', fLo, fHi, octaveCheck = true, clarity }) {
   if (rms(frame) < 1e-4) return { f0: 0, clarity: 0, valid: false }; // silence
   let r = null;
   if (algo === 'hps') r = hps(frame, { fs, minFreq: fLo, maxFreq: fHi, harmonics: 5, threshold: MIN_CLARITY.hps });
-  else if (algo === 'yin') r = yin(frame, { fs });
+  else if (algo === 'yin') r = clarity === undefined ? yin(frame, { fs }) : yinDip(frame, fs, 0.15, fs / (fHi * 1.2));
   else r = mcleod(frame, { fs, threshold: MCLEOD_K });
   if (!r || !Number.isFinite(r.freq)) return { f0: 0, clarity: 0, valid: false };
   let f0 = r.freq;
@@ -64,6 +98,6 @@ export function detectPitch(frame, { fs, algo = 'mcleod', fLo, fHi, octaveCheck 
     const full = nsdfAt(frame, fs / f0), half = nsdfAt(frame, fs / (2 * f0));
     if (full > 0 && half >= OCTAVE_RATIO * full) f0 *= 2;
   }
-  const valid = f0 >= fLo && f0 <= fHi && r.clarity >= (MIN_CLARITY[algo] ?? 0.5);
+  const valid = f0 >= fLo && f0 <= fHi && r.clarity >= (clarity ?? MIN_CLARITY[algo] ?? 0.5);
   return { f0, clarity: r.clarity, valid };
 }
