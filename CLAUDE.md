@@ -23,7 +23,10 @@
   pipeline, tracker or detectors, and update the tables in `docs/measurements.md` if the numbers change.
 - Car recognition is `public/detectors/car-id.js` (thresholds in `CAR_ID`), learned and measured by
   `tools/cars.js` (`npm run learn-cars`, `npm run eval-cars`). Its thresholds were set on simulated
-  cars only; retune them on the user's `samples/dr2/results-cars.md` when it exists.
+  cars and hold on the real clips (72 of 82 named, 1 wrong, cylinder count 80 of 80): the cars it
+  cannot tell apart share one sound in the game, so there is nothing left to tune there. The open
+  question is recordings of the user's own driving, which the clips (learned and tested on two parts
+  of the same recording) do not answer.
 - `npm run eval-rpm` scores each rpm on the real clips (`samples/dr2/`, not in the repo) against an
   offline reference (`tools/lib/reference.js`). Re-run it after touching `firingTone`, the detectors
   or the fusion, and update the table in `docs/measurements.md` ("Is the rpm right?"). A change that helps one car
