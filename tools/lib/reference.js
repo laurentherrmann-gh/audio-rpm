@@ -164,8 +164,11 @@ export function ridgeOrder(db) {
 
 /**
  * Reference rpm of a recording.
- * @returns {{ t:number[], rpm:(number|null)[], sure:boolean[], stretches:object[] }} one value per REF.hop;
- *   sure = the order of the ridge was read from the tones around it (not assumed from neighbours)
+ * @returns {{ t:number[], rpm:(number|null)[], sure:boolean[], hz:(number|null)[], order:(number|null)[], stretches:object[] }}
+ *   one value per REF.hop, t = centre of the analysis window;
+ *   sure = the order of the ridge was read from the tones around it (not assumed from neighbours);
+ *   hz = the tone that was followed, order = its engine order (per turn of the crank: the firing
+ *   tone of a four is order 2), so rpm = 60 × hz / order
  */
 export function referenceRpm(samples, fsIn) {
   const { x, fs } = decimate(samples, fsIn), r = ridge(x, fs), n = r.hz.length;
@@ -202,7 +205,49 @@ export function referenceRpm(samples, fsIn) {
     const near = [...sure].sort((p, q) => Math.abs((p.a + p.b) / 2 - (s.a + s.b) / 2) - Math.abs((q.a + q.b) / 2 - (s.a + s.b) / 2));
     for (const c of near) { const rpm = (120 * s.hz) / c.j; if (rpm >= REF.rpmMin && rpm <= REF.rpmMax) { s.j = c.j; break; } }
   }
-  const rpm = new Array(n).fill(null), ok = new Array(n).fill(false);
-  for (const s of stretches) if (s.j) for (let i = s.a; i <= s.b; i++) { rpm[i] = (120 * r.hz[i]) / s.j; ok[i] = Boolean(s.sure); }
-  return { t, rpm, sure: ok, stretches: stretches.map(s => ({ from: +t[s.a].toFixed(2), to: +t[s.b].toFixed(2), hz: +s.hz.toFixed(1), j: s.j, sure: Boolean(s.sure), read: s.read ?? null })) };
+  const rpm = new Array(n).fill(null), ok = new Array(n).fill(false), order = new Array(n).fill(null);
+  for (const s of stretches) if (s.j) for (let i = s.a; i <= s.b; i++) { rpm[i] = (120 * r.hz[i]) / s.j; ok[i] = Boolean(s.sure); order[i] = s.j / 2; }
+  return { t, rpm, sure: ok, hz: r.hz, order, stretches: stretches.map(s => ({ from: +t[s.a].toFixed(2), to: +t[s.b].toFixed(2), hz: +s.hz.toFixed(1), j: s.j, sure: Boolean(s.sure), read: s.read ?? null })) };
+}
+
+/**
+ * The reference as a CSV text: one row per analysis frame, with what was done to get it in the
+ * header lines (ISO 18431-3 asks for the analysis parameters to be kept with a time-frequency
+ * result). Orders are engine orders, per turn of the crank, as in order analysis.
+ */
+export function referenceCsv(ref, { source = '', fs = null } = {}) {
+  const head = [
+    '# reference rpm estimated from the sound alone (tacholess order tracking); not a measurement',
+    `# source: ${source}${fs ? `, ${fs} Hz` : ''}`,
+    '# method: ridge of the loudest tone in the spectrogram; sound resampled at equal angle along it;',
+    '#   the order of that tone read from the spacing of the tones around it; rpm = 60 x tone_hz / engine_order',
+    `# analysis: low-passed and decimated to ${REF.fs} Hz; STFT Hann window ${REF.win} samples (${Math.round((1000 * REF.win) / REF.fs)} ms), zero-padded to ${REF.pad}, hop ${REF.hop} s;`,
+    `#   ridge searched ${REF.fLo}-${REF.fHi} Hz; order spectrum ${REF.P} samples per period over ${REF.M} periods`,
+    '# time_s: centre of the analysis window',
+    '# sure: 1 = the order was read from this stretch of sound; 0 = taken over from the nearest stretch where it was (less reliable)',
+    '# engine_order: order of the followed tone per turn of the crank (firing tone = cylinders / 2)',
+    'time_s,rpm,sure,engine_order,tone_hz',
+  ];
+  const rows = ref.t.map((t, i) => (ref.rpm[i] === null
+    ? `${t.toFixed(3)},,,,`
+    : `${t.toFixed(3)},${ref.rpm[i].toFixed(1)},${ref.sure[i] ? 1 : 0},${ref.order[i]},${ref.hz[i].toFixed(2)}`));
+  return [...head, ...rows].join('\n') + '\n';
+}
+
+/**
+ * A tacho track for the recording: one 1 ms pulse per turn of the crank, the form order-analysis
+ * tools read (a second channel next to the sound). Only where the reference is sure; silent elsewhere.
+ * @returns {Float32Array} n samples at fs
+ */
+export function tachoPulses(ref, fs, n) {
+  const out = new Float32Array(n), width = Math.max(1, Math.round(fs / 1000)), hop = ref.t.length > 1 ? ref.t[1] - ref.t[0] : REF.hop;
+  let phase = 0, on = false;
+  for (let i = 0; i < n; i++) {
+    const x = (i / fs - ref.t[0]) / hop, a = Math.floor(x), b = a + 1;
+    if (a < 0 || b >= ref.t.length || !ref.sure[a] || !ref.sure[b] || ref.order[a] !== ref.order[b]) { on = false; continue; }
+    if (!on) { on = true; phase = 0; }
+    phase += (ref.rpm[a] + (ref.rpm[b] - ref.rpm[a]) * (x - a)) / 60 / fs; // turns of the crank
+    if (phase >= 1) { phase -= 1; for (let k = 0; k < width && i + k < n; k++) out[i + k] = 0.9; }
+  }
+  return out;
 }

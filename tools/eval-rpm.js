@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { fileFor } from '../public/cars.js';
 import { CYLINDERS } from '../public/engine-model.js';
 import { readWav, replay } from './lib/audio.js';
-import { referenceRpm, REF } from './lib/reference.js';
+import { referenceRpm, referenceCsv, REF } from './lib/reference.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -41,6 +41,7 @@ function grade(v, truth) {
 const rows = [];
 for (const { car, n, file } of todo) {
   const { fs, samples } = readWav(file), ref = referenceRpm(samples, fs);
+  writeFileSync(file.replace(/\.wav$/i, '.rpm.csv'), referenceCsv(ref, { source: path.basename(file), fs })); // the reference itself, to look at
   // trusted stretches of the reference (see the top of this file)
   const N = car.cylinders, trusted = new Array(ref.rpm.length).fill(false);
   for (const s of ref.stretches) {

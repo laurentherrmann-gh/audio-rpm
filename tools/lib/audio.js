@@ -1,6 +1,6 @@
 // Shared by tools/analyze.js and tools/eval-dr2.js: read a WAV, and replay audio through the
 // detection pipeline exactly as the page feeds it (same low-pass and decimation, 256-sample chunks).
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { Pipeline } from '../../public/pipeline.js';
 
 /** Minimal WAV reader: PCM 16/24/32-bit or float 32, any channel count (mixed to mono). */
@@ -32,6 +32,16 @@ export function readWav(path) {
 }
 
 /** Same low-pass as the page (two cascaded 2nd-order Butterworth sections). */
+/** Write 16-bit PCM: one Float32Array per channel, all the same length. */
+export function writeWav(file, channels, fs) {
+  const n = channels[0].length, c = channels.length, b = Buffer.alloc(44 + n * c * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * c * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(c, 22); b.writeUInt32LE(fs, 24); b.writeUInt32LE(fs * c * 2, 28);
+  b.writeUInt16LE(c * 2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * c * 2, 40);
+  for (let i = 0, p = 44; i < n; i++) for (let k = 0; k < c; k++, p += 2) b.writeInt16LE(Math.round(Math.max(-1, Math.min(1, channels[k][i])) * 32767), p);
+  writeFileSync(file, b);
+}
+
 export function lowpass(x, fs, fc) {
   const w = (2 * Math.PI * fc) / fs, alpha = Math.sin(w) / (2 * Math.SQRT1_2), cw = Math.cos(w), a0 = 1 + alpha;
   const b0 = (1 - cw) / 2 / a0, b1 = (1 - cw) / a0, b2 = b0, a1 = (-2 * cw) / a0, a2 = (1 - alpha) / a0;

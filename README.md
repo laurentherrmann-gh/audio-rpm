@@ -456,6 +456,31 @@ npm run eval-rpm -- --cylinders auto
 It writes `samples/dr2/results-rpm.md` (per car: share of the clip scored, the loudest tone the
 reference found, share right for each rpm, most common error).
 
+### The reference as files
+
+Estimating the speed of a machine from its own sound or vibration, then resampling at equal angle
+to read "orders", is known as **tacholess order tracking**; the reference is one of those methods
+(ridge in the spectrogram → angle resampling → order spectrum), with one addition: it works out by
+itself which order the ridge is. No standard prescribes such an algorithm or a file for its result.
+What the files below follow is the usual practice: orders counted per turn of the crank (**engine
+order**: the firing tone of a four is order 2), and the analysis parameters kept with the result, as
+ISO 18431-3 asks for time-frequency analyses.
+
+```sh
+npm run reference-rpm
+npm run reference-rpm -- ~/Downloads/clip.wav --tacho
+```
+
+| file | content |
+|---|---|
+| `<clip>.rpm.csv` | one row every 20 ms: `time_s` (centre of the analysis window), `rpm`, `sure` (1 = the order was read from that stretch of sound; 0 = taken over from the nearest such stretch), `engine_order` and `tone_hz` of the tone that was followed (rpm = 60 × tone_hz / engine_order). The lines starting with `#` say how it was computed (sample rate, window, hop, search band). `npm run eval-rpm` writes it too. |
+| `<clip>.tacho.wav` | with `--tacho`: stereo, left = the sound, right = one 1 ms pulse per turn of the crank where the reference is sure. This is the form order-analysis tools take as a tacho channel (MATLAB's `tachorpm` reads such pulses), to cross-check the reference or draw an order map elsewhere. |
+
+In Python: `pandas.read_csv(f, comment='#')`. For a tool that does not skip comment lines, delete the
+lines starting with `#` first. It is an estimate, not a measurement: use the rows with `sure` = 1. Not written as ASAM MDF (`.mf4`, the
+automotive standard for measured channels): there is no writer for it in JavaScript here, and a CSV
+converts to it with Python's `asammdf` if it is ever needed.
+
 ## Gear shifts and gear
 
 In gear, the revs follow the car's speed and change gradually. A shift is a step: the revs drop
@@ -604,7 +629,8 @@ tools/                       udp-listen (SimHub stand-in), make-test-wav, bench,
                              fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), cars (learn-cars / eval-cars:
                              car profiles and how well cars are recognised), lib/audio.js (WAV + replay),
                              lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound),
-                             eval-rpm (is the rpm right on the real clips?), lib/reference.js (offline reference rpm)
+                             eval-rpm (is the rpm right on the real clips?), lib/reference.js (offline reference rpm),
+                             reference-rpm (that reference as .rpm.csv and .tacho.wav files)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 
