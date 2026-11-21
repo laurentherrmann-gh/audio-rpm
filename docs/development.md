@@ -27,6 +27,7 @@ public/pipeline.js           both detectors, adaptive window, trackers, predicti
 public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js (pitch-detection wrapper),
                              cylinders.js (cylinder count from the engine-cycle tones),
                              car-id.js (car recognition from the tone: snapshots, profiles, matcher),
+                             tones.js (a car's tone map: its engine orders' levels by rpm, to pick the firing tone),
                              shifts.js (gear shifts from the rpm's steps, counted gear)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
 public/fusion.js             one rpm from the two detectors (octave slips corrected)
@@ -40,7 +41,7 @@ tools/                       udp-listen (SimHub stand-in), make-test-wav, bench,
                              car profiles and how well cars are recognised), lib/audio.js (WAV + replay),
                              lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound),
                              eval-rpm (is the rpm right on the real clips?), eval-shifts (are the shifts found?),
-                             lib/reference.js (offline reference rpm),
+                             lib/reference.js (offline reference rpm), lib/tone-learn.js (a tone map from a recording),
                              reference-rpm (that reference as .rpm.csv and .tacho.wav files)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```

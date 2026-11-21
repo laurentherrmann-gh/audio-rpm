@@ -10,7 +10,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fileFor } from '../public/cars.js';
+import { fileFor, slug } from '../public/cars.js';
+import { loadProfiles } from '../public/detectors/car-id.js';
 import { readWav, replay } from './lib/audio.js';
 import { referenceRpm, REF } from './lib/reference.js';
 
@@ -20,6 +21,9 @@ const opt = (name, d) => { const i = argv.indexOf('--' + name); return i >= 0 ? 
 const dir = path.resolve(ROOT, opt('dir', 'samples/dr2'));
 const manifest = JSON.parse(readFileSync(path.resolve(ROOT, opt('manifest', 'samples/dr2-cars.json')), 'utf8'));
 const only = opt('only') ? new Set(opt('only').split(',').map(Number)) : null;
+// the cars' tone maps, as the page has them once npm run learn-cars has run
+const profilesFile = path.join(dir, 'car-profiles.json');
+const learned = existsSync(profilesFile) ? loadProfiles(JSON.parse(readFileSync(profilesFile, 'utf8'))) : null;
 const NEAR = 0.35, REVS = { idle: 800, redline: 9000 };
 
 // In gear the revs follow the car's speed: over a third of a second, a straight line (in log rpm).
@@ -101,13 +105,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (!todo.length) { console.error('No car files: run npm run init (or npm run fetch-dr2) first.'); process.exit(1); }
   const rows = [];
   for (const { car, n, file } of todo) {
-    const { fs, samples } = readWav(file), ref = referenceRpm(samples, fs), truth = referenceShifts(ref, car.cylinders);
+    const { fs, samples } = readWav(file), ref = referenceRpm(samples, fs, { cylinders: car.cylinders }), truth = referenceShifts(ref, car.cylinders);
     const live = [];
     let last = null;
-    replay(samples, fs, { cylinders: car.cylinders, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null) }, (t, r) => {
+    const key = slug(car.car), maps = learned?.cars[key]?.tones;
+    replay(samples, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null) }, (t, r) => {
       const e = r.gear?.last;
       if (e && e !== last) { last = e; live.push({ at: e.at, t: e.t, dir: e.dir, ratio: e.ratio }); }
-    });
+    }, 256, pipe => { if (maps?.length) pipe.tones = { [key]: maps }; });
     const used = new Set(), found = [], missed = [];
     for (const s of truth.shifts) {
       const k = live.findIndex((e, i) => !used.has(i) && e.dir === s.dir && Math.abs(e.at - s.at) <= NEAR);

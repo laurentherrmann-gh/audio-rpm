@@ -181,7 +181,11 @@ export function loadProfiles(file) {
     const centroids = (c.parts || []).flatMap(p => p.centroids);
     if (!centroids.length) continue;
     const spreads = c.parts.map(p => p.spread).filter(Number.isFinite);
-    cars[key] = { car: c.car, n: c.n, cylinders: c.cylinders ?? null, centroids, spread: spreads.reduce((a, b) => a + b, 0) / Math.max(1, spreads.length) };
+    cars[key] = {
+      car: c.car, n: c.n, cylinders: c.cylinders ?? null, centroids, spread: spreads.reduce((a, b) => a + b, 0) / Math.max(1, spreads.length),
+      // the car's tone maps (detectors/tones.js), one per recording it was learned from: each camera its own
+      tones: c.parts.map(p => p.tones).filter(Boolean),
+    };
   }
   return { sigma2: typicalSpread(cars), cars };
 }

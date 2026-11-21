@@ -63,10 +63,11 @@ export function lowpass(x, fs, fc) {
  * does; call onStep(t, result, pipe) after each.
  * @returns {Pipeline}
  */
-export function replay(samples, fs, cfg, onStep, hop = 256) {
+export function replay(samples, fs, cfg, onStep, hop = 256, prepare = null) {
   const D = 2 ** Math.round(Math.log2(fs / 12000)) || 1;
   const low = lowpass(samples, fs, Math.min(2500, (0.4 * fs) / D));
   const pipe = new Pipeline(fs, D, cfg);
+  prepare?.(pipe); // e.g. pipe.setCars(profiles)
   for (let end = hop; end <= samples.length; end += hop) {
     const dec = new Float32Array(hop / D);
     for (let i = 0; i < dec.length; i++) dec[i] = low[end - hop + i * D];

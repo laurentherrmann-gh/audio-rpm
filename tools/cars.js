@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { CAR_ID, CarMatcher, distanceTo, learn, loadProfiles, snapshotsOf } from '../public/detectors/car-id.js';
 import { carNumberIn, fileFor, slug } from '../public/cars.js';
 import { readWav, cylName } from './lib/audio.js';
+import { TONES } from '../public/detectors/tones.js';
+import { learnTones } from './lib/tone-learn.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [command, ...argv] = process.argv.slice(2);
@@ -35,11 +37,21 @@ function writeProfiles(p) {
   writeFileSync(profilesPath, JSON.stringify(p) + '\n');
 }
 /** Add (or replace) what one recording teaches about a car. */
-function addPart(p, car, source, frames) {
+function addPart(p, car, source, frames, tones = null) {
   const entry = (p.cars[car.key] ??= { car: car.car, n: car.n, cylinders: car.cylinders, parts: [] });
   const { centroids, spread } = learn(frames);
   entry.parts = entry.parts.filter(x => x.source !== source);
-  entry.parts.push({ source, seconds: Math.round(frames.length * CAR_ID.every), spread, centroids });
+  entry.parts.push({ source, seconds: Math.round(frames.length * CAR_ID.every), spread, centroids, ...(tones ? { tones } : null) });
+}
+/**
+ * The car's tone map from one recording (public/detectors/tones.js): how loud each of the engine's
+ * tones is, by rpm. It needs the rpm, which the offline reference reads from the sound, so only
+ * the stretches where that reference is sure count, and only cars whose cylinder count is known.
+ */
+function tonesOf(car) {
+  if (!car.cylinders) return null;
+  const { fs, samples } = readWav(car.file), { map, frames } = learnTones(samples, fs, car.cylinders);
+  return frames >= TONES.minFrames ? map : null;
 }
 function carForFile(file) {
   const n = Number(opt('car')) || carNumberIn(path.basename(file));
@@ -52,7 +64,7 @@ function carForFile(file) {
 
 function learnCommand() {
   const p = readProfiles();
-  let learned = 0;
+  let learned = 0, mapped = 0;
   const todo = files.length ? files.map(file => ({ ...carForFile(file), file })) : clips();
   if (!todo.length) { console.error(`No car files in ${path.relative(ROOT, dir)}/. Run npm run fetch-dr2 first, or give --file <recording.wav>.`); process.exit(1); }
   for (const car of todo) {
@@ -61,14 +73,18 @@ function learnCommand() {
       console.log(`  skipped ${path.basename(car.file)}: ${frames.length ? `only ${(frames.length * CAR_ID.every).toFixed(0)} s of sound` : 'silent'}`);
       continue;
     }
-    addPart(p, car, path.basename(car.file), frames);
+    const tones = tonesOf(car);
+    if (tones) mapped++;
+    addPart(p, car, path.basename(car.file), frames, tones);
     learned++;
-    if (files.length) console.log(`  ${car.car} (${name(car.cylinders)}): learned from ${path.basename(car.file)}, ${(frames.length * CAR_ID.every).toFixed(0)} s of sound`);
+    if (files.length) console.log(`  ${car.car} (${name(car.cylinders)}): learned from ${path.basename(car.file)}, ${(frames.length * CAR_ID.every).toFixed(0)} s of sound${tones ? `, tone map from ${Math.round(tones.n.at(-1) * 0.05)} s of it` : ', no tone map (the rpm could not be read from it)'}`);
+    else process.stdout.write(`\r  ${learned} of ${todo.length} cars…`);
   }
   if (!learned) { console.error('Nothing learned.'); process.exit(1); }
   writeProfiles(p);
   const loaded = loadProfiles(p);
-  console.log(`Learned ${learned} recording(s). ${Object.keys(loaded.cars).length} car(s) known → ${path.relative(ROOT, profilesPath)}`);
+  if (!files.length) process.stdout.write('\r');
+  console.log(`Learned ${learned} recording(s), a tone map from ${mapped} of them. ${Object.keys(loaded.cars).length} car(s) known, ${Object.values(loaded.cars).filter(c => c.tones).length} with a tone map → ${path.relative(ROOT, profilesPath)}`);
   const alike = soundAlike(loaded);
   if (alike.length) console.log(`Cars that sound alike (recognition can't tell them apart): ${alike.map(a => a.join(' = ')).join('; ')}`);
   console.log('Reload the page and choose car "Auto · recognise".');

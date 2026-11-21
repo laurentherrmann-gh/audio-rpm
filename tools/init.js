@@ -97,10 +97,12 @@ step('Car profiles (car recognition)');
 const profiles = at('samples', 'dr2', 'car-profiles.json');
 if (!clips().length) console.log('No clips, so nothing to learn from: the car picker works, recognition by sound stays off.');
 else {
-  const newest = Math.max(...clips().map(f => mtime(at('samples', 'dr2', f))), mtime(at('public', 'detectors', 'car-id.js')));
+  // learned again when a clip, or the code that learns (fingerprints, tone maps, the reference rpm), is newer
+  const code = [['public', 'detectors', 'car-id.js'], ['public', 'detectors', 'tones.js'], ['tools', 'lib', 'tone-learn.js'], ['tools', 'lib', 'reference.js']];
+  const newest = Math.max(...clips().map(f => mtime(at('samples', 'dr2', f))), ...code.map(c => mtime(at(...c))));
   if (mtime(profiles) >= newest) { console.log('Up to date.'); done.push('car profiles up to date'); }
   else {
-    console.log(existsSync(profiles) ? 'Older than the clips or the recognition code. Learning again…' : 'Not learned yet. Learning from the clips…');
+    console.log((existsSync(profiles) ? 'Older than the clips or the code that learns from them. Learning again' : 'Not learned yet. Learning from the clips') + ' (fingerprints and tone maps: a few minutes)…');
     if (run('npm', ['run', '-s', 'learn-cars'])) done.push('car profiles learned');
     else todo.push('npm run learn-cars   (it failed: read the messages above)');
   }

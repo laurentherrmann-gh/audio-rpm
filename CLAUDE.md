@@ -27,6 +27,14 @@
   cannot tell apart share one sound in the game, so there is nothing left to tune there. The open
   question is recordings of the user's own driving, which the clips (learned and tested on two parts
   of the same recording) do not answer.
+- A car's tone map (`public/detectors/tones.js`, learned by `npm run learn-cars` into
+  `car-profiles.json`, one map per recording so that each camera has its own) picks the firing tone
+  when the car is picked or recognised. `npm run eval-rpm` uses the learned maps, which is flattering
+  (same clips); `-- --tones split` is the fair test and `-- --tones off` the detectors alone. Judge a
+  change to the tone rule by the split test.
+- The reference (`tools/lib/reference.js`) has been wrong before (a tone read as two different orders
+  in neighbouring stretches). When a car reads "half" or "double" for a whole stretch, check the
+  reference's stretches for that car before blaming the detectors.
 - `npm run eval-rpm` scores each rpm on the real clips (`samples/dr2/`, not in the repo) against an
   offline reference (`tools/lib/reference.js`). Re-run it after touching `firingTone`, the detectors
   or the fusion, and update the table in `docs/measurements.md` ("Is the rpm right?"). A change that helps one car

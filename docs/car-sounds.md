@@ -97,3 +97,28 @@ In Python: `pandas.read_csv(f, comment='#')`. For a tool that does not skip comm
 lines starting with `#` first. It is an estimate, not a measurement: use the rows with `sure` = 1. Not written as ASAM MDF (`.mf4`, the
 automotive standard for measured channels): there is no writer for it in JavaScript here, and a CSV
 converts to it with Python's `asammdf` if it is ever needed.
+
+### Learning the cars: fingerprints and tone maps
+
+```sh
+npm run learn-cars
+npm run learn-cars -- --file ~/Downloads/audio-rpm-car20-….wav
+```
+
+`npm run learn-cars` (also run by `npm run init`) reads every clip and writes
+`samples/dr2/car-profiles.json`. For each recording of a car it keeps two things, with no audio in
+them:
+
+- a **fingerprint** of the car's tone, for "Auto · recognise" (see
+  [Car recognition](measurements.md#car-recognition));
+- a **tone map**: how loud each of the engine's tones is at each rev range, which the detectors use
+  to tell the firing tone from its neighbours once the car is picked or recognised (see
+  [Is the rpm right?](measurements.md#is-the-rpm-right-every-real-car-against-a-reference)). It needs
+  the rpm of the recording, which is read from the sound itself; a recording where that fails (too
+  short, no steady driving) gets a fingerprint only. It takes a few seconds per recording.
+
+**One recording per camera.** A car sounds different from the bonnet, the cockpit and behind. Each
+recording is kept as its own map, and the one that fits what is heard answers, so nothing has to be
+selected while playing: record each car you drive once per camera you use (● Rec in the page with
+the car picked, a minute of normal driving through the gears), and add it with `--file`. Learning a
+recording again replaces what was learned from the file of that name.

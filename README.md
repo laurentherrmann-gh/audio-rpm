@@ -41,10 +41,10 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 
 | | result |
 |---|---|
-| RPM, car picked | right (within 6%) 82% of the scored time, 90% while the revs are steady; most of the rest is lag while they jump |
+| RPM, car picked | right (within 6%) 86% of the scored time with the car's tone map (85% in a fair test on sound it was not learned from, 83% without a map), 94% while the revs are steady; most of the rest is lag while they jump |
 | Cylinder count from the sound | 72 of 80 cars right, 8 undecided, none wrong |
 | Car recognised from its sound | 72 of 82 right, 1 wrong, 9 not sure |
-| Gear shifts | 81% of the clean shifts found, 11% of the reported ones false: the counted gear drifts after a few shifts |
+| Gear shifts | 83% of the clean shifts found, 10% of the reported ones false: the counted gear drifts after a few shifts |
 
 ## Commands
 
@@ -55,7 +55,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | `npm test` · `npm run test:ui` | unit tests · the page in a real browser |
 | `npm run bench` | lag and error on the simulator (`-- --auto` cylinder detection, `-- --shifts` gear shifts) |
 | `npm run fetch-dr2` | cut a recording of the "All Cars Sounds" video into one clip per car |
-| `npm run learn-cars` · `npm run eval-cars` | learn the cars' sounds · measure recognition |
+| `npm run learn-cars` · `npm run eval-cars` | learn the cars' sounds and tone maps (add `-- --file rec.wav` for your own recording of a car, one per camera) · measure recognition |
 | `npm run eval-dr2` | cylinder detection on the real clips |
 | `npm run eval-rpm` · `npm run eval-shifts` | is the RPM right on the real clips · are the gear shifts found |
 | `npm run reference-rpm` | the offline reference RPM of a recording, as CSV (and a tacho track) |

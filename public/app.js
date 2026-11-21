@@ -58,7 +58,7 @@ if (!profiles['']) profiles[''] = { idle: S.idle, redline: S.redline };
 if (!profiles[''].scales) profiles[''].scales = scales; // calibration used to be one for all cars
 const feed = () => document.querySelector('input[name=feed]:checked').value;
 const pipelineCfg = () => ({
-  cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, maxGear: S.maxGear, scale: { ...scales }, predict: S.predict,
+  cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', carKey: carNow()?.key ?? null, autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, maxGear: S.maxGear, scale: { ...scales }, predict: S.predict,
   gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
   pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
   tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
@@ -165,7 +165,8 @@ function pickCar() {
   if (recognising()) setMsg(`Recognising the car from its sound. Until it is recognised: cylinders on Auto, ${revs}.` + (running ? '' : ' Press Start.'));
   else if (!c) setMsg(`No car: cylinders back to Auto, ${revs}.`);
   else setMsg(`${c.car}: ${c.cylinders ? `${cylName(c.cylinders)} (${c.layout})` : `cylinder count not known for the game's model, so Auto detects it`}, ` +
-    (own ? `${revs} as you set them for this car.` : `${revs} (not set for this car yet: change them under Settings and they are remembered for it).`));
+    (own ? `${revs} as you set them for this car.` : `${revs} (not set for this car yet: change them under Settings and they are remembered for it).`) +
+    (carProfiles?.cars?.[c.key]?.parts?.some(x => x.tones) ? ' Its tone map is used: which of its engine tones is loud at which revs.' : ''));
 }
 function settingsChanged() {
   const prev = S; S = readSettings();

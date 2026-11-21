@@ -30,6 +30,10 @@ export const REF = Object.freeze({
   minFractional: 0.12, minExplained: 0.8, // to call a stretch's order "sure"
   minSeconds: 1.2,          // a stretch shorter than this can't say which order it is
   rpmMin: 450, rpmMax: 10500,
+  chainGap: 2.5,            // s: stretches this close, whose tone carries on within chainRatio…
+  chainRatio: [0.6, 1.45],  // …(a gear shift moves it by less; a switch to another tone by more) are one tone
+  chainTypical: [0.8, 1.25],
+  chainShare: 0.25,         // share of a chain's sure time an order needs to overrule the others
 });
 
 function decimate(samples, fs) {
@@ -163,14 +167,15 @@ export function ridgeOrder(db) {
 }
 
 /**
- * Reference rpm of a recording.
+ * Reference rpm of a recording. `cylinders`, when known, only settles which of two orders a tone is
+ * where two stretches of it disagree; everything else is read from the sound.
  * @returns {{ t:number[], rpm:(number|null)[], sure:boolean[], hz:(number|null)[], order:(number|null)[], stretches:object[] }}
  *   one value per REF.hop, t = centre of the analysis window;
  *   sure = the order of the ridge was read from the tones around it (not assumed from neighbours);
  *   hz = the tone that was followed, order = its engine order (per turn of the crank: the firing
  *   tone of a four is order 2), so rpm = 60 × hz / order
  */
-export function referenceRpm(samples, fsIn) {
+export function referenceRpm(samples, fsIn, { cylinders = null } = {}) {
   const { x, fs } = decimate(samples, fsIn), r = ridge(x, fs), n = r.hz.length;
   const t = Array.from({ length: n }, (_, i) => r.offset + i * r.hop);
   // unbroken stretches of the ridge
@@ -197,6 +202,44 @@ export function referenceRpm(samples, fsIn) {
     // sure = tones at fractions of the ridge are clearly there, and this order accounts for nearly all tones
     if (rpm >= REF.rpmMin && rpm <= REF.rpmMax && q.fractional >= REF.minFractional && q.explained[q.j - 1] >= REF.minExplained) { s.j = q.j; s.sure = true; }
     s.read = q.j; s.fractional = q.fractional;
+  }
+  // The same tone carried on from one stretch to the next (no jump to another tone between them) is
+  // the same order in both: the revs do not double from one moment to the next. Where two such
+  // stretches read different orders, one of which divides the other (2 and 4), the larger is the
+  // truth: it saw tones in between that the smaller order has no place for, while a stretch can read
+  // the smaller simply because those tones were too faint in it. (Found on the Subaru Impreza: ten
+  // seconds read as order 2, twice the revs of the same 160 Hz tone before and after it.)
+  const chains = [], sureOnes = stretches.filter(s => s.sure);
+  for (const s of sureOnes) {
+    // carried on from an earlier sure stretch (short unsure ones may lie between): where the one
+    // ends and the other begins, or (across a lift between them) in what the two were mostly at
+    const chain = chains.find(c => {
+      const prev = c.at(-1), ratio = r.hz[s.a] / r.hz[prev.b], typical = s.hz / prev.hz;
+      return (s.a - prev.b) * r.hop <= REF.chainGap
+        && ((ratio >= REF.chainRatio[0] && ratio <= REF.chainRatio[1]) || (typical >= REF.chainTypical[0] && typical <= REF.chainTypical[1]));
+    });
+    if (chain) chain.push(s); else chains.push([s]);
+  }
+  for (const chain of chains) {
+    const sure = chain.filter(s => s.sure);
+    if (new Set(sure.map(s => s.j)).size < 2) continue;
+    const total = sure.reduce((a, s) => a + s.seconds, 0), weight = j => sure.filter(s => s.j === j).reduce((a, s) => a + s.seconds, 0);
+    const orders = [...new Set(sure.map(s => s.j))].sort((x, y) => y - x);
+    // With the cylinder count given: the firing tone, if it was read for a fair share of the chain
+    // (the loudest tone of most engines; a stretch reading twice that order found tones that may be
+    // chance). Else the largest order that the others divide and that is not a lone short stretch;
+    // else the one heard longest.
+    const fair = c => weight(c) >= REF.chainShare * total;
+    const j = (cylinders && orders.includes(cylinders) && fair(cylinders) ? cylinders : null)
+      ?? orders.find(c => orders.every(o => c % o === 0) && fair(c)) ?? orders.sort((x, y) => weight(y) - weight(x))[0];
+    for (const s of sure) {
+      if (s.j === j) continue;
+      const rpm = (120 * s.hz) / j;
+      // its own reading is not contradicted, only sharpened (or, with the count given, coarsened to the firing tone)
+      s.sure = (j % s.j === 0 || (j === cylinders && s.j % j === 0)) && rpm >= REF.rpmMin && rpm <= REF.rpmMax;
+      s.j = s.sure ? j : null;
+      s.chained = true;
+    }
   }
   // stretches that could not say: the order of the nearest sure stretch that keeps the rpm plausible
   const sure = stretches.filter(s => s.sure);

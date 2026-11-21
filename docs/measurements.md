@@ -242,37 +242,73 @@ until gyroball reads the higher value too, or the jump has lasted 0.5 s. In `fir
 that is twice one already accepted must beat it by 3 dB on fours and V8s (it could be its second
 harmonic), and a correction away from a pitch that continues the detector's own track must last 0.5 s.
 
-Share of the scored time each rpm is right (within 6% of the reference), 80 cars, at the start → now:
+**The reference was wrong on three cars, and with it part of the above.** On the Subaru Impreza it
+read ten seconds of a 160 Hz tone as the crank tone (9,600 rpm) between two stretches of the same
+tone read as the firing tone (4,800 rpm); likewise on the Škoda Fabia 2005 and the Ford RS200. The
+"half the revs a third of the time" these cars were charged with was the reference at twice the
+revs. A tone that carries on from one stretch to the next is now the same order in both: where two
+readings of it disagree, the cylinder count (when given) settles it for the firing tone, and
+otherwise the larger order wins if the smaller divides it. Against the corrected reference the
+Impreza is right 88% of the time instead of 51%, without any change to the detectors.
 
-| | all | 4-cyl (68) | 5-cyl (1) | 6-cyl (8) | 8-cyl (3) | reads ½ or ¼ |
+**Each car's tone map** (`public/detectors/tones.js`). The general rule above (the loudest
+candidate is the firing tone) is wrong on exactly the cars that are hard: the Porsche 911 RGT, whose
+half-firing tone is often the louder, the Subaru Impreza 1995, the Audi quattro. With the car known,
+each rpm the pitch could stand for is tested instead against what this car sounds like at that rpm:
+the levels of its first 16 engine orders, read from the spectrum at the places that rpm puts them,
+compared with the levels learned for that rpm band (a likelihood: deviation in units of each
+order's own spread, with a charge for a wide spread). The map overrules the general rule only when
+another rpm fits the car clearly better, and where it backs the answer the waiting rules are skipped.
+`npm run learn-cars` learns the maps from the clips (the reference gives the rpm) into
+`car-profiles.json`; the page uses the map of the car that is picked or recognised. A car has one
+map per recording it was learned from, and the one that fits the sound answers: the engine sounds
+different from each camera, so record a car once per camera you use and learn each.
+
+The fair test (`npm run eval-rpm -- --tones split`): each car's map learned from every other 4 s
+of its clip, the detectors scored on the rest, without and with it:
+
+| combined rpm right | all | 4-cyl (68) | 5-cyl (1) | 6-cyl (8) | 8-cyl (3) | on a wrong tone |
 |---|---|---|---|---|---|---|
-| pitch-detection | 58 → 79% | 65 → 81% | 11 → 45% | 21 → 66% | 2 → 64% | 14 → 4% |
-| gyroball | 63 → 72% | 68 → 73% | 64 → 64% | 28 → 65% | 7 → 69% | 9 → 2% |
-| **combined** | **69 → 82%** | 75 → 84% | 36 → 61% | 38 → 73% | 3 → 69% | 9 → 3% |
+| without the tone maps | 84% | 86% | 58% | 75% | 73% | 3% |
+| **with them** | **85%** | 86% | **69%** | **80%** | 74% | **1%** |
 
-53 of the 78 scored cars are at 80% or more; the median car is at 86%. With cylinder auto-detection
-instead of the car's count (`npm run eval-rpm -- --cylinders auto`) the combined rpm is right 72% of
-the time: until a count is locked the rpm is on the guess of four cylinders, and the firing-tone
-check and the second try's long window wait for a count that is certain (letting a locked count
-switch them on gained nothing and cost 6 right counts). The firing-tone check is off
-while the cylinder count is being detected from the sound (auto-detection works on the pitch as found,
-and lost 5 right counts with it on): pick the car, or let it be recognised, to get it. The 8-cyl
-column is two cars (Ford Mustang GT4 and a few seconds of the Aston Martin; the Camaro has no scored
-moment).
+15 cars gain 2 points or more (Porsche 911 RGT 53 → 82%, Subaru Impreza 1995 66 → 84%, Audi quattro
+58 → 69%, Datsun 240Z 64 → 75%), 7 lose 2 to 4. Most cars were already right, so the average moves
+little; the weak ones move a lot. It is still one recording per car, learned and tested on two
+halves of it: your own driving, and another camera, are the real test.
 
-**What the remaining 18% is.** Each wrong moment is checked against the reference a little earlier
+On the whole clips, with the maps learned from those same clips (flattering, but it is what the page
+does with these recordings):
+
+| | all | 4-cyl (68) | 5-cyl (1) | 6-cyl (8) | 8-cyl (3) |
+|---|---|---|---|---|---|
+| pitch-detection | 84% | 85% | 56% | 76% | 65% |
+| gyroball | 75% | 76% | 64% | 73% | 70% |
+| **combined** | **86%** | 87% | 69% | 81% | 70% |
+| combined, without the maps (`--tones off`) | 83% | 85% | 61% | 73% | 69% |
+
+66 of the 78 scored cars are at 80% or more; the median car is at 87%. (The first measurement of all,
+before any of this section and against the first version of the reference, was 69%.) With cylinder
+auto-detection instead of the car's count (`npm run eval-rpm -- --cylinders auto`) the combined rpm
+is right 72% of the time: until a count is locked the rpm is on the guess of four cylinders, and the
+firing-tone check, the second try's long window and the tone map wait for a car or a count that is
+certain (letting a locked count switch them on gained nothing and cost 6 right counts): pick the car,
+or let it be recognised. The 8-cyl column is two cars (Ford Mustang GT4 and a few seconds of the
+Aston Martin; the Camaro has no scored moment).
+
+**What the remaining 14% is.** Each wrong moment is checked against the reference a little earlier
 and later (`eval-rpm` reports it as "timing"):
 
 | share of the scored time | what |
 |---|---|
-| 82% | right |
+| 86% | right |
 | 10% | right, but late or early: the value matches the reference of up to 0.15 s before or after |
-| 4% | on another tone of the engine (½, ¼, ×2…) |
-| 4% | wrong otherwise |
+| under 1% | on another tone of the engine (½, ¼, ×2…) |
+| 3% | wrong otherwise |
 
 The lag is the larger half of what is left. These clips are showcases with much revving in neutral:
-the revs move faster than 75% per second during 17% of the scored time, and there the combined rpm is
-right 42% of the time, against 90% when they are steady. Two tracker changes were measured for it and
+the revs move faster than 75% per second during 16% of the scored time, and there the combined rpm is
+right 44% of the time, against 94% when they are steady. Two tracker changes were measured for it and
 not kept: a shorter time constant (0.03 s: +1 point, but auto-detection loses 3 right counts) and
 carrying the rate of change through a re-acquire (+1 point, but the rpm overshoots and shift
 detection loses 12 points). One was kept: readings from the second try's long window are stamped
@@ -282,7 +318,8 @@ the reference (40 ms on the simulated stage, where a steady pull hides it: the t
 through a steady slope, not through a blip or a shift). During fast changes pitch-detection often
 has no reading, and gyroball's 170 ms window reads the past.
 
-**Is it worth running both detectors?** Yes, measured on the same moments:
+**Is it worth running both detectors?** Yes, measured on the same moments (before the tone maps and
+the corrected reference, which lift every row by a few points):
 
 | | right |
 |---|---|
@@ -305,18 +342,20 @@ What is still wrong:
 
 - A car with a saved calibration keeps it: if you calibrated one of the three V6s before `"scale": 2`
   existed, press "Reset scales" on it once.
-- Aston Martin V8 Vantage GT4 (21%, 2 s scored), Porsche 911 RGT (49%), Subaru Impreza (51%, half the
-  revs a third of the time: its crank tone is louder than its firing tone then, as on the three V6s,
-  but only part of the time, so a fixed ×2 is no cure), Audi quattro (61%), Datsun 240Z (61%),
-  Subaru WRX STI RX (61%).
-- Peugeot 206 Rally (39%) and Lancia 037 (48%), "twice the revs" for 47% and 28% of the time: here the
-  reference is the doubtful one (it scored moments where the loudest tone is twice the firing tone).
+- Aston Martin V8 Vantage GT4 (21%, 2 s scored), Volkswagen Golf GTI 16v (57%), Lancia 037 (65%),
+  Subaru WRX STI RX (68%), Audi quattro (69%), MG Metro 6R4 (69%), Datsun 240Z (72%): mostly lag now,
+  not wrong tones.
+- Peugeot 206 Rally (39%, "twice the revs" half of the time): its loudest tone is the second
+  harmonic of the firing tone, and the reference is sure of only 7 s of it, too little for a map that
+  overrules the detectors.
 - Fast rev changes, as above.
 
 ```sh
 npm run eval-rpm
 npm run eval-rpm -- --only 13,25
 npm run eval-rpm -- --cylinders auto
+npm run eval-rpm -- --tones split
+npm run eval-rpm -- --tones off
 ```
 
 It writes `samples/dr2/results-rpm.md` (per car: share of the clip scored, the loudest tone the
@@ -360,13 +399,14 @@ launch).
 
 | | first detector (a fast, short change of the rpm) | now (break between two lines) |
 |---|---|---|
-| clean shifts found | 243 of 313 (78%) | **254 of 313 (81%)** |
-| live shifts judged false | 214 of 644 (33%) | **42 of 380 (11%)** |
-| live shifts not judged | 1,584 (20 per clip) | 518 (6 per clip) |
-| reported after the shift | 225 ms | 315 ms |
-| ratio off by (median) | 6.4% | 5.1% |
+| clean shifts found | 243 of 313 (78%) | **300 of 363 (83%)** |
+| live shifts judged false | 214 of 644 (33%) | **46 of 445 (10%)** |
+| live shifts not judged | 1,584 (20 per clip) | 527 (7 per clip) |
+| reported after the shift | 225 ms | 314 ms |
+| ratio off by (median) | 6.4% | 5.0% |
 
-The first detector was tuned on the simulator, where the rpm is smooth; on real sound the rpm has
+(The first column was measured before the reference was corrected and the tone maps added, which is
+why it has fewer clean shifts to find.) The first detector was tuned on the simulator, where the rpm is smooth; on real sound the rpm has
 glitches and holes that look just like its "fast, short change". The price of the line fit is
 0.09 s: a shift is reported 0.32 s after it instead of 0.23 s (0.28 s instead of 0.19 s on the
 simulator, where the ratio is also measured to 2–3% instead of 1%).

@@ -29,6 +29,7 @@ import { analyseSpectrum } from './detectors/gyroball-core.js';
 import { detectPitch } from './detectors/pd-core.js';
 import { detectCylinders } from './detectors/cylinders.js';
 import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.js';
+import { TONES, orderLevels, toneDistance } from './detectors/tones.js';
 import { ShiftDetector } from './detectors/shifts.js';
 import { Fusion } from './fusion.js';
 import { Tracker } from './tracker.js';
@@ -67,7 +68,7 @@ export const DEFAULTS = Object.freeze({
   // could be its second harmonic; on sixes the tone an octave below the firing tone is strong by
   // nature, so none is asked). firingSwitch: s a correction must last when the pitch as found
   // continues this detector's own track (then a louder multiple is more likely a harmonic).
-  lockedIsKnown: false, firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  tones: true, carKey: null, lockedIsKnown: false, firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
   // the same lag and error as every 20 ms (measured), for four times the work
@@ -142,6 +143,8 @@ export class Pipeline {
 
   /** Car profiles ({ sigma2, cars }, from tools/cars.js), or null for none. */
   setCars(profiles) {
+    this.tones = {};
+    for (const [key, c] of Object.entries(profiles?.cars || {})) if (c.tones?.length) this.tones[key] = c.tones; // a list: one map per recording
     this.cars = profiles && Object.keys(profiles.cars || {}).length ? new CarMatcher(profiles) : null;
     this.forgetCar();
   }
@@ -429,6 +432,11 @@ export class Pipeline {
       for (let k = m + 1; k < 2 * m; k++) between = Math.max(between, level(f0 * k));
       if (l - between >= clear) { top = l; best = f0 * m; taken = m; }
     }
+    // the car's own tone map may overrule the general rule; where it backs the answer (this rpm
+    // fits the car, the pitch as found does not), there is nothing to wait for
+    const mapped = this.byTones(key, f0, N, best);
+    best = mapped.f;
+    if (mapped.backed && best !== f0) { st.pending = null; st.f = best; st.at = tEnd; return best; }
     if (best === f0) {
       if (!known || close(f0, st.f)) { st.f = f0; st.at = tEnd; }
       return f0;
@@ -447,6 +455,42 @@ export class Pipeline {
     }
     st.pending = null; st.f = best; st.at = tEnd;
     return best;
+  }
+
+  /** The tone maps in use (one per recording of the car): the picked car's (cfg.carKey) or the recognised car's, if any were learned. */
+  toneMap() {
+    const key = this.cfg.car === 'auto' ? this.cars?.state().car : this.cfg.carKey;
+    return (key && this.tones?.[key]) || null;
+  }
+
+  /**
+   * The firing tone by the car's tone map (detectors/tones.js): each rpm the pitch could stand for
+   * (the firing tone as found, a divisor of the cylinder count higher, or an octave lower) is
+   * tested against what this car sounds like at that rpm. `chosen` is what the general rule made of
+   * the pitch; it stands unless another rpm fits the car clearly better.
+   * @returns {{ f: number, backed: boolean }} backed: the map itself says f, and not the pitch as found
+   */
+  byTones(key, f0, N, chosen) {
+    const maps = this.toneMap();
+    if (!maps || !this.cfg.tones) return { f: chosen, backed: false };
+    const { db, binHz } = this.gyroSpec, scale = this.cfg.scale[key], top = this.cfg.redline * 1.15;
+    const { margin, sure, fits } = { ...TONES, ...this.cfg.toneRule };
+    let best = chosen, dBest = Infinity, dChosen = null, dFound = null;
+    for (const m of [1, 0.5, 2, 3, 4, 5, 6, 8]) {
+      if (m > 1 && (m > N || N % m)) continue;
+      const rpm = rpmFromFiringHz(f0 * m, N) * scale;
+      if (rpm > top || rpm < this.cfg.rpmMin) continue;
+      const d = toneDistance(maps, rpm, orderLevels(db, binHz, rpm / 120, this.buf('tone', TONES.orders)));
+      if (d === null) continue;
+      if (m === 1) dFound = d;
+      if (Math.abs((f0 * m) / chosen - 1) < 1e-6) dChosen = d;
+      if (d < dBest) { dBest = d; best = f0 * m; }
+    }
+    // no map for the rpm the general rule chose (the car was never heard there): another rpm is
+    // taken only if it fits the car as well as its own sound does
+    const f = dChosen === null ? (dBest <= sure ? best : chosen) : dBest <= fits && dChosen - dBest >= margin ? best : chosen;
+    const d = f === best ? dBest : dChosen;
+    return { f, backed: d !== null && d <= fits && (dFound === null ? d <= sure : dFound - d >= margin) };
   }
 
   analyseGyro(tEnd) {
