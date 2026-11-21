@@ -370,10 +370,91 @@ spectrogram:
 | gyroball | 70% | 19% | 1% | 11% |
 | **combined** | **90%** | 4% | 0% | 7% |
 
+(With the firing-tone check of the next section the detectors themselves read 83% and 80% right on
+this clip; the combined rpm stays at 90%.)
+
 With the combined rpm, the two clean upshifts in the clip are found (×0.72 and ×0.73), with no false
 shift; with pitch-detection alone one was missed and two were misread. What is left wrong is mostly
 revving in neutral on the limiter, where the readings also hop to three quarters of the revs, a ratio a
 real shift can have. One car and 24 seconds: these rules will be re-measured on the full set.
+
+## Is the rpm right? Every real car against a reference
+
+The recordings of the 82 cars have no rpm truth, so one is computed offline, from the sound alone and
+without the cylinder count (`tools/lib/reference.js`):
+
+1. Follow the car's loudest tone through the clip (a ridge in the spectrogram, found with a path
+   search that allows fast shifts but no jumps to an unrelated tone).
+2. Resample the sound along that tone, so that the tone stands still, and take the spectrum: every
+   engine tone is a multiple of the **cycle frequency** (rpm / 120, one cycle = two turns of the
+   crank), so the tones now sit at fractions k/j of the loudest one. The j that explains them says the
+   loudest tone is the j-th multiple of the cycle.
+3. rpm = 120 × tone / j.
+
+On the DS 21 clip it agrees with the hand-traced reference on 96% of the moments where it is sure
+(83% of the clip). It needs about a second of sound around each moment, so it is a measuring tool, not
+a detector. It is not always right either: whine from a turbo or gearbox can make it read j = 10 or 12
+on a four. So `npm run eval-rpm` only scores the moments where the reference is sure **and** j is the
+car's cylinder count, half of it or twice it (from a few percent to 86% of a clip; two cars have no such moment).
+
+**What it found.** With the cylinder count set by hand, the combined rpm was right 69% of the scored
+time. The largest single fault: on many cars pitch-detection and gyroball lock onto the cycle or the
+crank tone and read a quarter or a half of the revs, even while the firing tone is the loudest tone
+in the spectrum (Ford Escort RS Cosworth, Subaru Legacy: a quarter of the revs for more than half of
+the driving).
+
+**The fix: the firing tone among the multiples of the pitch** (`firingTone` in `public/pipeline.js`).
+With the cylinder count known, a pitch that is not the firing tone can only be the firing tone divided
+by a divisor of the count. So the few candidates (pitch × 2 and × 4 on a four; × 2, × 3, × 6 on a six)
+are looked up in the spectrum gyroball already has, and the loudest is taken if it:
+
+- beats the pitch by 3 dB and stays within the rev range;
+- beats the pitch's next multiples by 5 dB. Above a true firing tone those are weak in-between tones;
+  above the second harmonic of a firing tone they are its third harmonic, nearly as loud. Without this
+  test a strong second harmonic was read as twice the revs (Mitsubishi Lancer Evo VI, Opel Manta);
+- has lasted 60 ms, or lands where the detector already was. A wrong correction of a few frames costs
+  seconds otherwise: the combined rpm takes the true readings that follow for a slip to half.
+
+**Three V6s that sound like two threes.** On the Lancia Stratos and both MG Metro 6R4s the loudest
+tone is half the firing tone and the firing tone itself is weak, so both detectors read half the revs
+throughout, and nothing in one spectrum tells that from a six at half the revs. The car list
+(`samples/dr2-cars.json`) now gives these three `"scale": 2`, and the page starts their calibration
+from it (picked or recognised; "Reset scales" goes back to it). Right on those cars: 0–8% → 64–78%.
+
+Share of the scored time each rpm is right (within 6% of the reference), 80 cars, before → after both
+changes:
+
+| | all | 4-cyl (68) | 5-cyl (1) | 6-cyl (8) | 8-cyl (3) | reads ½ or ¼ |
+|---|---|---|---|---|---|---|
+| pitch-detection | 58 → 70% | 65 → 74% | 11 → 27% | 21 → 54% | 2 → 44% | 14 → 3% |
+| gyroball | 63 → 72% | 68 → 73% | 64 → 64% | 28 → 67% | 7 → 69% | 9 → 2% |
+| **combined** | **69 → 78%** | 75 → 79% | 36 → 62% | 38 → 72% | 3 → 66% | 9 → 2% |
+
+The simulator benchmarks are unchanged by it (its firing tone is always the loudest). It is off while
+the cylinder count is being detected from the sound (auto-detection works on the pitch as found, and
+lost 5 of its 66 right counts with it on): pick the car, or let it be recognised, to get it. The 8-cyl
+column is two cars (Ford Mustang GT4 and a few seconds of the Aston Martin; the Camaro has no scored
+moment).
+
+What is still wrong:
+
+- A car with a saved calibration keeps it: if you calibrated one of the three V6s before this change,
+  press "Reset scales" on it once.
+- Subaru Legacy RS (28%), Aston Martin V8 Vantage GT4 (20%), Lancia 037 (46%), Subaru Impreza (49%,
+  half the revs a third of the time): boxer and V8 rumble; not looked into yet.
+- Peugeot 206 Rally (39%, "twice the revs" 47%): here the reference is the doubtful one (it only found
+  moments where the loudest tone is twice the firing tone).
+- The 17% "other" on all cars is not broken down yet: part of it is the detectors' lag at shifts
+  against a reference that has none.
+
+```sh
+npm run eval-rpm
+npm run eval-rpm -- --only 13,25
+npm run eval-rpm -- --cylinders auto
+```
+
+It writes `samples/dr2/results-rpm.md` (per car: share of the clip scored, the loudest tone the
+reference found, share right for each rpm, most common error).
 
 ## Gear shifts and gear
 
@@ -495,6 +576,7 @@ npm test          # packet layout, car list, car recognition, combined rpm, shif
 npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 npm run bench -- --shifts # gear shifts and gear on the simulated stage
+npm run eval-rpm  # real clips: each rpm against the offline reference (needs samples/dr2/)
 npm run test:ui   # the page in a real browser at Retina scale (needs Playwright, see test/ui/smoke.mjs)
 ```
 
@@ -521,7 +603,8 @@ public/cars.js               car keys and file names, shared by the car picker a
 tools/                       udp-listen (SimHub stand-in), make-test-wav, bench, analyze (replay a WAV),
                              fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), cars (learn-cars / eval-cars:
                              car profiles and how well cars are recognised), lib/audio.js (WAV + replay),
-                             lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound)
+                             lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound),
+                             eval-rpm (is the rpm right on the real clips?), lib/reference.js (offline reference rpm)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 

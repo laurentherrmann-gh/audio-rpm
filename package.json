@@ -18,7 +18,8 @@
     "eval-dr2": "node tools/eval-dr2.js",
     "learn-cars": "node tools/cars.js learn",
     "eval-cars": "node tools/cars.js eval",
-    "test:ui": "node test/ui/smoke.mjs"
+    "test:ui": "node test/ui/smoke.mjs",
+    "eval-rpm": "node tools/eval-rpm.js"
   },
   "dependencies": {
     "pitch-detection": "^1.0.0",

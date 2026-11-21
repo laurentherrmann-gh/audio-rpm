@@ -1,7 +1,7 @@
 {
  "source": "https://www.youtube.com/watch?v=zw2Zxv66eWo",
  "title": "DiRT Rally 2.0 All Cars Sounds",
- "note": "Segments from the video's chapter list. Where one chapter lists two or three cars, its time is split evenly between them (an assumption). cylinders = the real car's engine (null = not known for the game's model; excluded from scoring).",
+ "note": "Segments from the video's chapter list. Where one chapter lists two or three cars, its time is split evenly between them (an assumption). cylinders = the real car's engine (null = not known for the game's model; excluded from scoring). scale = factor on the detected rpm for cars whose loudest rhythm is not the firing tone (these V6s sound like two threes: half the firing rate), measured with npm run eval-rpm; the page starts the car's calibration from it.",
  "cars": [
   {
    "start": 0,
@@ -92,7 +92,8 @@
    "end": 520,
    "car": "Lancia Stratos",
    "cylinders": 6,
-   "layout": "V6"
+   "layout": "V6",
+   "scale": 2
   },
   {
    "start": 520,
@@ -162,7 +163,8 @@
    "end": 920,
    "car": "MG Metro 6R4",
    "cylinders": 6,
-   "layout": "V6"
+   "layout": "V6",
+   "scale": 2
   },
   {
    "start": 920,
@@ -421,7 +423,8 @@
    "end": 2400,
    "car": "MG Metro 6R4 Rallycross",
    "cylinders": 6,
-   "layout": "V6"
+   "layout": "V6",
+   "scale": 2
   },
   {
    "start": 2400,

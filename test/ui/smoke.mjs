@@ -99,6 +99,8 @@ try {
   await set('actual', '3000'); await p.click('#cal-pd');
   const calibrated = await scaleText();
   await p.selectOption('#car', 'lancia-stratos');
+  check('a V6 that sounds like two threes starts at ×2', (await scaleText()).includes('pitch ×2.000') && (await scaleText()).includes('gyroball ×2.000'), await scaleText());
+  await p.selectOption('#car', 'peugeot-205-gti');
   check('a calibration is not carried to another car', (await scaleText()).includes('pitch ×1.000') && !calibrated.includes('pitch ×1.000'), calibrated);
   await p.selectOption('#car', 'audi-sport-quattro-s1-e2');
   check('…and comes back with its car', await scaleText() === calibrated);

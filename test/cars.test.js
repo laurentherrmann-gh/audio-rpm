@@ -23,3 +23,9 @@ test('a recording made with a car picked names its car number, and the tools rea
   assert.equal(carNumberIn('audio-rpm-Sim-6-cyl-20261120152408.wav'), null);
   assert.equal(carNumberIn('audio-rpm-BlackHole-2ch-20261120152408.wav'), null);
 });
+
+test('a starting calibration is only given to the V6s whose loudest rhythm is half the firing rate', () => {
+  const scaled = cars.filter(c => c.scale !== undefined);
+  assert.deepEqual(scaled.map(c => c.car), ['Lancia Stratos', 'MG Metro 6R4', 'MG Metro 6R4 Rallycross']);
+  assert.ok(scaled.every(c => c.scale === 2 && c.cylinders === 6));
+});

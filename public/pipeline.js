@@ -52,7 +52,15 @@ const CYL_LOCK = { votes: 3, share: 0.6 };
 const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 
 export const DEFAULTS = Object.freeze({
-  cylinders: 4, car: 'off', maxGear: 6, autoGuess: 4, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  cylinders: 4, car: 'off', maxGear: 6, autoGuess: 4,
+  // firingMargin: dB by which a multiple of the detected pitch must beat it to be taken for the
+  // firing tone (0 = off). Real engines: the pitch found is often the cycle or crank tone.
+  // firingClear: dB by which it must also beat the pitch's multiples just above it: those are not
+  // firing harmonics if the choice is right, and are if the pitch was the firing tone all along.
+  // firingConfirm: s a correction must last before it is used, unless it lands where this detector
+  // already was (firingKeep: for how long that counts). A short wrong one costs seconds: the
+  // combined rpm takes the true reading that follows for a slip to half.
+  firingMargin: 3, firingClear: 5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
   // the same lag and error as every 20 ms (measured), for four times the work
@@ -113,7 +121,7 @@ export class Pipeline {
   /** The rpm scale changed: restart the trackers, and don't take the jump for a gear shift. */
   reset() {
     this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.shifts.clear();
-    this.gyroLast = null;
+    this.gyroLast = null; this.gyroSpec = null; this.firing = {};
     this.scale = (this.scale || 0) + 1; // readings taken before and after are not comparable
   }
 
@@ -363,6 +371,57 @@ export class Pipeline {
     return res;
   }
 
+  /**
+   * The firing tone among the multiples of a detected pitch. On real engines the period a detector
+   * finds is often the engine's cycle (two turns of the crank) or one turn, not the firing interval:
+   * the pitch is then the firing tone divided by the cylinder count, or by a divisor of it. With the
+   * count known, the candidates are few (pitch × a divisor of the count), and the firing tone is the
+   * loudest of them in the latest spectrum, if it beats the pitch itself by `firingMargin` dB and
+   * stays within the rev range.
+   *
+   * A pitch that already is the firing tone can have a louder second harmonic, which would pass that
+   * test. What tells the two apart is the next multiple of the pitch: above a true firing tone it is
+   * a weak in-between tone (`firingClear` dB down), above a second harmonic it is the third harmonic
+   * and nearly as loud.
+   */
+  firingTone(key, f0, tEnd) {
+    const N = this.cylinders(), { firingMargin: margin, firingClear: clear, firingConfirm, firingKeep } = this.cfg;
+    const st = ((this.firing ??= {})[key] ??= { f: 0, at: -Infinity, pending: null });
+    const known = tEnd - st.at <= firingKeep, close = (a, b) => Math.abs(a / b - 1) <= this.cfg.firingNear;
+    if (!margin || !this.gyroSpec || tEnd - this.gyroSpec.t > 0.06) return f0;
+    // not while the count is being detected from the sound: that detection works on the pitch as
+    // found (measured on the real clips: 5 of 66 right counts were lost with the correction on)
+    if (this.cfg.cylinders === 'auto' && this.carCyl === null) return f0;
+    const { db, binHz } = this.gyroSpec, { fHi } = this.band();
+    const level = f => {
+      const a = Math.max(1, Math.floor((f * 0.985) / binHz)), b = Math.min(db.length - 1, Math.ceil((f * 1.015) / binHz));
+      let m = -Infinity;
+      for (let i = a; i <= b; i++) if (db[i] > m) m = db[i];
+      return m;
+    };
+    let best = f0, top = level(f0) + margin;
+    for (let m = 2; m <= N; m++) {
+      if (N % m || f0 * m > fHi) continue;
+      const l = level(f0 * m);
+      if (l <= top) continue;
+      let between = -Infinity;
+      for (let k = m + 1; k < 2 * m; k++) between = Math.max(between, level(f0 * k));
+      if (l - between >= clear) { top = l; best = f0 * m; }
+    }
+    if (best === f0) {
+      if (!known || close(f0, st.f)) { st.f = f0; st.at = tEnd; }
+      return f0;
+    }
+    if (!(known && close(best, st.f))) {
+      const p = st.pending;
+      if (!p || tEnd - p.at > this.cfg.firingGap || !close(best, p.f)) st.pending = { since: tEnd, at: tEnd, f: best };
+      else { p.f = best; p.at = tEnd; }
+      if (tEnd - st.pending.since < firingConfirm) return f0;
+    }
+    st.pending = null; st.f = best; st.at = tEnd;
+    return best;
+  }
+
   analyseGyro(tEnd) {
     const t0 = performance.now();
     const g = this.cfg.gyro, N = g.fft, fs = this.fs;
@@ -376,6 +435,8 @@ export class Pipeline {
     const r = analyseSpectrum(db, fs / N, g.tuned
       ? { fLo, fHi, mode: g.mode, octaveCheck: true, requireFundamental: true, maxHz: Math.min(fs * 0.45, Math.max(1500, fHi * 8)) }
       : { fLo, fHi, mode: g.mode });
+    this.gyroSpec = { db, binHz: fs / N, t: tEnd };
+    if (r.valid) r.f0 = this.firingTone('gyro', r.f0, tEnd);
     const raw = r.valid ? rpmFromFiringHz(r.f0, this.cylinders()) * this.cfg.scale.gyro : null;
     return this.finish('gyro', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `score ${r.score.toFixed(0)} · harmonics ${r.harmonics.join(',')}×` : '',
@@ -402,6 +463,7 @@ export class Pipeline {
     const { fLo, fHi } = this.band();
     const r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi });
     this.detectCyl(tEnd);
+    if (r.valid) r.f0 = this.firingTone('pd', r.f0, tEnd);
     const raw = r.valid ? rpmFromFiringHz(r.f0, this.cylinders()) * this.cfg.scale.pd : null;
     const res = this.finish('pd', raw, tEnd, N / fs / 2, t0, {
       f0: r.f0, valid: r.valid, info: r.valid ? `clarity ${r.clarity.toFixed(2)}` : '', winMs: (N / fs) * 1000,

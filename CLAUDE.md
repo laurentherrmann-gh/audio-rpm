@@ -18,6 +18,10 @@
 - Car recognition is `public/detectors/car-id.js` (thresholds in `CAR_ID`), learned and measured by
   `tools/cars.js` (`npm run learn-cars`, `npm run eval-cars`). Its thresholds were set on simulated
   cars only; retune them on the user's `samples/dr2/results-cars.md` when it exists.
+- `npm run eval-rpm` scores each rpm on the real clips (`samples/dr2/`, not in the repo) against an
+  offline reference (`tools/lib/reference.js`). Re-run it after touching `firingTone`, the detectors
+  or the fusion, and update the table in README.md ("Is the rpm right?"). A change that helps one car
+  can cost another: compare the per-car table in `samples/dr2/results-rpm.md` before and after.
 - `public/fusion.js` makes the combined rpm (tach, SimHub and shift detection use it). Its rules come
   from one real clip (DS 21); re-measure on real clips before changing them, not on the simulator.
 - Shift and gear detection is `public/detectors/shifts.js` (thresholds in `SHIFT`), fed by

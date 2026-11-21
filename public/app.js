@@ -116,11 +116,13 @@ async function loadCars() {
   if ($('car').value === 'auto' ? !carProfiles : !carNow()) { $('car').value = ''; store.set('car', ''); }
   sendConfig();
 }
+/** Calibration a car starts from: 1, or the manifest's factor for a car whose loudest rhythm is not the firing tone. */
+const carScales = key => { const k = carByKey(key)?.scale ?? 1; return { gyro: k, pd: k }; };
 function applyRevs(key) { // a car's remembered idle, redline and calibration (or the no-car ones) into the settings
   const own = profiles[key], p = own ?? profiles[''];
   $('idle').value = p.idle; $('redline').value = p.redline;
   for (const id of ['idle', 'redline']) store.set(id, val(id));
-  scales = { gyro: 1, pd: 1, ...(own ? own.scales : null) }; // a calibration belongs to one car's sound
+  scales = { ...carScales(key), ...(own ? own.scales : null) }; // a calibration belongs to one car's sound
   store.set('scales', scales); showScales();
   return { own, text: `idle ${p.idle} · redline ${p.redline} rpm` };
 }
@@ -728,7 +730,7 @@ for (const k of ['gyro', 'pd']) {
     setMsg(`Calibrated ${k}: ${Math.round(cur)} → ${actual} rpm${c ? `, remembered for the ${c.car}` : ''}.`);
   };
 }
-$('cal-reset').onclick = () => { scales = { gyro: 1, pd: 1 }; store.set('scales', scales); saveProfile(); showScales(); sendConfig(); };
+$('cal-reset').onclick = () => { scales = carScales(profileKey()); store.set('scales', scales); saveProfile(); showScales(); sendConfig(); };
 
 $('pd-algo-name').textContent = S.algo;
 showScales();
