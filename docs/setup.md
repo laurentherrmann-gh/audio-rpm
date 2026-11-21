@@ -54,7 +54,7 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
   and the calibration are remembered per car: set them once under Settings with the car picked. The list doesn't
   include each car's redline; the game's values aren't in it. Recordings made with a car picked are
   named `audio-rpm-carNN-…`, and `eval-dr2 --file` reads the car from that name.
-  **Auto · recognise** names the car from its sound instead (see [Car recognition](measurements.md#car-recognition));
+  **Auto · recognise** names the car from its sound instead, in a fixed slot next to the list ("→ Opel Ascona 400 or 2 others"; hover for every candidate) (see [Car recognition](measurements.md#car-recognition));
   it is available once `npm run learn-cars` has learned the cars.
 - **Tachometer:** needle and readout for the rpm picked with *tach* on its card: **combined** by default
   (see [One RPM from two detectors](measurements.md#one-rpm-from-two-detectors)), or either detector alone; the thin

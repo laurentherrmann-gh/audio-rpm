@@ -50,6 +50,16 @@ try {
 
   check('page fits one screen before starting', await pageHeight() <= 900, `${await pageHeight()} px`);
 
+  // the state texts of the top bar have a fixed place: a long list of possible cars moves nothing
+  const startLeft = () => p.evaluate(() => Math.round(document.getElementById('start').getBoundingClientRect().left));
+  const say = text => p.evaluate(t => { document.getElementById('car-state').textContent = t; }, text);
+  await say('→ Audi Sport quattro S1 E2');
+  const leftShort = await startLeft();
+  await say('→ Opel Ascona 400 or Opel Manta 400 or Ford RS200 or Lancia 037 Evo 2');
+  check('a long list of possible cars does not move the controls', await startLeft() === leftShort, `Start at ${leftShort} px, then ${await startLeft()} px`);
+  check('…and is cut with an ellipsis', await p.evaluate(() => { const e = document.getElementById('car-state'); return e.scrollWidth > e.clientWidth && getComputedStyle(e).textOverflow === 'ellipsis'; }));
+  await say('');
+
   // car picker: cylinders, per-car redline and calibration
   await p.selectOption('#car', 'audi-sport-quattro-s1-e2');
   check('picking the Audi quattro sets 5 cylinders', await p.inputValue('#cylinders') === '5');

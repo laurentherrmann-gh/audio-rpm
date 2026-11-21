@@ -136,10 +136,17 @@ function onCarHeard(state) {
   const el = $('car-state');
   if (!recognising() || !state) { el.textContent = ''; return; }
   const names = state.top.map(x => carByKey(x.key)?.car ?? x.key);
+  // one short line in a fixed place; the full list of candidates is in the tooltip
+  const others = names.length - 1;
   const text = state.car ? `→ ${carByKey(state.car)?.car ?? state.car}`
     : state.listening ? 'listening…'
-      : state.cylinders && names.length ? `→ ${names.join(' or ')}`
+      : state.cylinders && names.length ? `→ ${names[0]}${others ? ` or ${others} other${others > 1 ? 's' : ''}` : ''}`
         : names.length ? `${names[0]}? ${Math.round(state.top[0].p * 100)}%` : 'unknown sound';
+  const tip = state.car ? `Recognised from the sound: ${carByKey(state.car)?.car ?? state.car}`
+    : state.listening ? 'Listening: a few seconds of engine sound are needed'
+      : names.length ? `Could be: ${state.top.map((x, i) => `${names[i]} (${Math.round(x.p * 100)}%)`).join(', ')}${state.cylinders ? `. They all have ${state.cylinders} cylinders, so that is already used.` : ''}`
+        : 'This sound matches none of the learned cars';
+  if (el.title !== tip) el.title = tip;
   if (el.textContent !== text) { el.textContent = text; el.style.color = state.car || state.cylinders ? '' : 'var(--warn)'; }
   if (state.car === heardCar || !state.car) return; // a named car stays until another one is named
   heardCar = state.car;
@@ -663,7 +670,7 @@ function drawCards() {
   fe.textContent = fu?.rpm != null ? Math.round(fu.rpm).toLocaleString() : '—';
   fe.classList.toggle('off', fu?.rpm == null);
   $('fused-sub').textContent = !fu ? '' : fu.rpm == null ? 'no reading' : fu.coast ? 'holding' : `from ${fu.source}`;
-  $('cyl-state').textContent = cylText().long;
+  if ($('cyl-state').textContent !== cylText().long) { $('cyl-state').textContent = cylText().long; $('cyl-state').title = `Cylinder count in use: ${cylText().long}`; }
   $('rec').textContent = recSince ? `■ Stop ${Math.floor((performance.now() - recSince) / 1000)} s` : '● Rec';
   $('rec').style.color = recSince ? 'var(--bad)' : '';
   if (simRandom && !simRandom.revealed) {
