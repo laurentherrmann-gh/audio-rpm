@@ -53,6 +53,9 @@ const REVS_HOLD = 0.5, REVS_MEMORY = 120;
 
 export const DEFAULTS = Object.freeze({
   cylinders: 4, car: 'off', maxGear: 6, autoGuess: 4,
+  // lockedIsKnown: treat a count locked by auto-detection like one set by hand (firing-tone check and
+  // second try on). Measured on the real clips: no gain in the combined rpm (72%), and 6 of the 73
+  // right counts are lost again, so it is off. Picking the car, or recognising it, is the way.
   // firingMargin: dB by which a multiple of the detected pitch must beat it to be taken for the
   // firing tone (0 = off). Real engines: the pitch found is often the cycle or crank tone.
   // firingClear: dB by which it must also beat the pitch's multiples just above it: those are not
@@ -64,7 +67,7 @@ export const DEFAULTS = Object.freeze({
   // could be its second harmonic; on sixes the tone an octave below the firing tone is strong by
   // nature, so none is asked). firingSwitch: s a correction must last when the pitch as found
   // continues this detector's own track (then a louder multiple is more likely a harmonic).
-  firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
+  lockedIsKnown: false, firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
   // the same lag and error as every 20 ms (measured), for four times the work
@@ -77,7 +80,11 @@ export const DEFAULTS = Object.freeze({
   // confirm: a rejected new level is accepted after it persists confirmBaseMs + confirmWin × ½ window
   // (measured: the fastest rule gives the least error and the fewest glitches, once the detector
   // itself rejects smeared readings)
-  tracker: { tau: 0.05, accel: 40000, reacq: 0.25, confirmBaseMs: 15, confirmWin: 0 },
+  // Measured on the real clips, and left as they are: tau 0.03 makes the rpm right 1 point more
+  // often but costs 3 of the cylinder counts auto-detection gets right; carry (taking the rejected
+  // readings' own rate of change along when re-acquiring) follows fast changes a little better but
+  // overshoots after them, and shift detection loses 12 points.
+  tracker: { tau: 0.05, accel: 40000, reacq: 0.25, confirmBaseMs: 15, confirmWin: 0, carry: false },
   predict: true,
   timestamp: 'centre', // 'end' reproduces POC 1 (reading stamped when computed)
 });
@@ -117,7 +124,7 @@ export class Pipeline {
     this.cfg = merge(this.cfg, cfg);
     const t = this.cfg.tracker;
     for (const tr of Object.values(this.trackers)) {
-      tr.set({ tau: t.tau, maxAccel: t.accel, maxVel: t.accel, reacquire: t.reacq, lag: 0.01 });
+      tr.set({ tau: t.tau, maxAccel: t.accel, maxVel: t.accel, reacquire: t.reacq, lag: 0.01, carry: t.carry });
     }
     const c = this.cfg;
     this.shifts.set({ idle: c.idle, redline: c.redline, maxGear: c.maxGear });
@@ -215,6 +222,11 @@ export class Pipeline {
     for (const x of r.win) { lo = Math.min(lo, x.f); hi = Math.max(hi, x.f); }
     r.fHigh = Math.max(r.fHigh, lo);             // held at least this high for REVS_HOLD
     r.fLow = r.fLow ? Math.min(r.fLow, hi) : hi; // held at most this low for REVS_HOLD
+  }
+
+  /** Is the cylinder count settled: set by hand, taken from the car, or (per cfg.lockedIsKnown) locked by auto-detection? */
+  countKnown() {
+    return this.cfg.cylinders !== 'auto' || this.carCyl !== null || (this.cfg.lockedIsKnown && this.cyl.locked !== null);
   }
 
   band() {
@@ -397,9 +409,9 @@ export class Pipeline {
     const st = ((this.firing ??= {})[key] ??= { f: 0, at: -Infinity, pending: null });
     const known = tEnd - st.at <= firingKeep, close = (a, b) => Math.abs(a / b - 1) <= this.cfg.firingNear;
     if (!margin || !this.gyroSpec || tEnd - this.gyroSpec.t > 0.06) return f0;
-    // not while the count is being detected from the sound: that detection works on the pitch as
-    // found (measured on the real clips: 5 of 66 right counts were lost with the correction on)
-    if (this.cfg.cylinders === 'auto' && this.carCyl === null) return f0;
+    // not while the count is still being detected from the sound: that detection works on the
+    // pitch as found
+    if (!this.countKnown()) return f0;
     const { db, binHz } = this.gyroSpec, { fHi } = this.band();
     const level = f => {
       const a = Math.max(1, Math.floor((f * 0.985) / binHz)), b = Math.min(db.length - 1, Math.ceil((f * 1.015) / binHz));
@@ -482,7 +494,7 @@ export class Pipeline {
     if (!r.valid && p.algo === 'yin' && p.clarity) {
       // Nothing in the short window. On many real engines one firing period does not repeat the last
       // one closely enough (the cylinders don't sound alike); what repeats is the whole cycle.
-      const known = !(this.cfg.cylinders === 'auto' && this.carCyl === null);
+      const known = this.countKnown();
       if (known && p.cycles && fNow) {
         // count known: a window that holds the cycle twice, so that YIN can find the cycle itself
         // (firingTone then turns it into the firing tone). Slower, so only when the short one fails.
@@ -518,9 +530,11 @@ export class Pipeline {
     const tr = this.trackers[key];
     const t = this.cfg.tracker; // a new level must persist beyond the window's own overlap
     tr.confirmMs = t.confirmBaseMs + t.confirmWin * halfWin * 1000;
-    const out = tr.step(raw, tStamp * 1000);
+    const out = tr.step(raw, tStamp * 1000, tEnd * 1000);
     let rpm = out ? out.rpm : null;
-    const ahead = tEnd - tStamp;
+    // the tracker's value is for the newest window centre it has seen, which is not always this
+    // reading's (a long second-try window after a short one): predict from there
+    const ahead = out ? Math.max(0, tEnd - tr.tLast / 1000) : tEnd - tStamp;
     if (out && this.cfg.predict && ahead > 0) rpm = Math.max(0, out.rpm + tr.v * ahead);
     return {
       raw, rpm, coast: out ? out.coast : false,

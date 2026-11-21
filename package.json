@@ -21,6 +21,7 @@
     "eval-cars": "node tools/cars.js eval",
     "test:ui": "node test/ui/smoke.mjs",
     "eval-rpm": "node tools/eval-rpm.js",
+    "eval-shifts": "node tools/eval-shifts.js",
     "reference-rpm": "node tools/reference-rpm.js"
   },
   "dependencies": {

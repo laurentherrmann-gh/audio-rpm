@@ -40,9 +40,9 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | | result |
 |---|---|
 | RPM, car picked | right (within 6%) 82% of the scored time, 90% while the revs are steady; most of the rest is lag while they jump |
-| Cylinder count from the sound | 73 of 80 cars right, 7 undecided, none wrong |
+| Cylinder count from the sound | 72 of 80 cars right, 8 undecided, none wrong |
 | Car recognised from its sound | 72 of 82 right, 1 wrong, 9 not sure |
-| Gear shifts | all found on the simulator; on the one real clip with known shifts, 3 of 3 found plus 3 false |
+| Gear shifts | 81% of the clean shifts found, 11% of the reported ones false: the counted gear drifts after a few shifts |
 
 ## Commands
 
@@ -55,7 +55,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | `npm run fetch-dr2` | cut a recording of the "All Cars Sounds" video into one clip per car |
 | `npm run learn-cars` · `npm run eval-cars` | learn the cars' sounds · measure recognition |
 | `npm run eval-dr2` | cylinder detection on the real clips |
-| `npm run eval-rpm` | is the RPM right on the real clips |
+| `npm run eval-rpm` · `npm run eval-shifts` | is the RPM right on the real clips · are the gear shifts found |
 | `npm run reference-rpm` | the offline reference RPM of a recording, as CSV (and a tacho track) |
 | `npm run analyze -- clip.wav` | replay any recording through the detectors |
 | `npm run listen` | stand-in for SimHub: prints the telemetry it receives |

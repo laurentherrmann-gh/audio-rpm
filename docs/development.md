@@ -10,6 +10,7 @@ npm run bench     # step-by-step lag benchmark (-- --cylinders 6 etc.)
 npm run bench -- --auto   # cylinder auto-detection on every engine, with and without idle
 npm run bench -- --shifts # gear shifts and gear on the simulated stage
 npm run eval-rpm  # real clips: each rpm against the offline reference (needs samples/dr2/)
+npm run eval-shifts # real clips: gear shifts against the shifts in the reference rpm
 npm run test:ui   # the page in a real browser at Retina scale (needs Playwright, see test/ui/smoke.mjs)
 ```
 
@@ -38,7 +39,8 @@ tools/                       udp-listen (SimHub stand-in), make-test-wav, bench,
                              init (gets a clone ready), fetch-dr2 / eval-dr2 (DiRT Rally 2.0 car-sound set), cars (learn-cars / eval-cars:
                              car profiles and how well cars are recognised), lib/audio.js (WAV + replay),
                              lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound),
-                             eval-rpm (is the rpm right on the real clips?), lib/reference.js (offline reference rpm),
+                             eval-rpm (is the rpm right on the real clips?), eval-shifts (are the shifts found?),
+                             lib/reference.js (offline reference rpm),
                              reference-rpm (that reference as .rpm.csv and .tacho.wav files)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```

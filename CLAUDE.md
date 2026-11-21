@@ -33,7 +33,9 @@
   changing them, not on the simulator. The simulator's default engine is too clean to show what real
   cars do: `synthesize(..., { cycleLevel: 0.3 })` gives cylinders that don't sound alike.
 - Shift and gear detection is `public/detectors/shifts.js` (thresholds in `SHIFT`), fed by
-  the combined rpm in the pipeline; `npm run bench -- --shifts` measures it. Tuned on the simulator and
-  one real clip (DS 21); not yet measured on the other cars.
+  the combined rpm in the pipeline. `npm run bench -- --shifts` measures it on the simulator,
+  `npm run eval-shifts` on the real clips (shifts read from the reference rpm). Tune it on the real
+  clips: the simulator's rpm is too smooth to show false shifts. Anything that makes the combined rpm
+  jumpier (tracker settings) costs shifts: re-run eval-shifts after touching the tracker or fusion.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

@@ -51,3 +51,19 @@ test('the reference as files: a CSV with its analysis parameters, and a tacho tr
   }
   assert.ok(right / n >= 0.95, `${right} of ${n} pulse gaps give the true rpm`);
 });
+
+test('shifts read from the reference rpm (the truth eval-shifts scores against): the simulated stage\'s own shifts, nothing else', async () => {
+  const { makeStageSchedule, shiftsIn, scheduleDuration } = await import('../public/engine-model.js');
+  const { referenceShifts } = await import('../tools/eval-shifts.js');
+  const fs = 48000, stage = makeStageSchedule({ idleRpm: 900, redline: 7500 }), truth = shiftsIn(stage);
+  const samples = synthesize(stage, { fs, seconds: scheduleDuration(stage), cylinders: 6, cycleLevel: 0.2 });
+  const { shifts, judge } = referenceShifts(referenceRpm(samples, fs), 6);
+  const matched = truth.filter(s => shifts.some(e => e.dir === (s.to > s.from ? 'up' : 'down') && Math.abs(e.at - s.t) < 0.35));
+  assert.ok(matched.length >= truth.length - 1, `${matched.length} of ${truth.length} listed`);
+  assert.ok(shifts.length <= truth.length, `${shifts.length} listed for ${truth.length} shifts`);
+  // the judge: a shift claimed where there is one is real, one claimed in the middle of a pull is false
+  const up = truth.find(s => s.to > s.from);
+  assert.equal(judge(up.t + 0.05, 'up'), 'true');
+  assert.equal(judge(up.t + 0.05, 'down'), 'false');
+  assert.equal(judge(up.t + 1.2, 'up'), 'false');
+});

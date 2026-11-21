@@ -89,9 +89,9 @@ const seconds = scheduleDuration(schedule) * 2;
 const signal = synthesize(schedule, { fs, seconds, cylinders });
 const truth = t => rpmAt(schedule, t);
 
-function run(hop, cfg) {
+function run(hop, cfg, sound = signal) {
   const pts = { gyro: [], pd: [], fused: [] }, comp = { gyro: [], pd: [], fused: [] };
-  replay(signal, fs, { cylinders, idle, redline, ...cfg }, (t, r) => {
+  replay(sound, fs, { cylinders, idle, redline, ...cfg }, (t, r) => {
     for (const k of ['gyro', 'pd', 'fused']) {
       if (!r[k]) continue;
       pts[k].push({ t, y: r[k].rpm });
@@ -116,13 +116,13 @@ function run(hop, cfg) {
   return out;
 }
 
-const POC1 = { timestamp: 'end', predict: false, tracker: { tau: 0.08 }, pd: { adaptive: false } };
+const POC1 = { timestamp: 'end', predict: false, tracker: { tau: 0.08, carry: false }, pd: { adaptive: false } };
 const steps = [
   ['POC 1 (20 ms timer, stamped at end)', 960, POC1],
   ['+ run on every 5.3 ms chunk', 256, POC1],
   ['+ stamp at window centre + predict', 256, { ...POC1, timestamp: 'centre', predict: true }],
-  ['+ tracker τ 0.05', 256, { ...POC1, timestamp: 'centre', predict: true, tracker: { tau: 0.05 } }],
-  ['+ adaptive pitch window (= new default)', 256, {}],
+  ['+ tracker τ 0.05', 256, { ...POC1, timestamp: 'centre', predict: true, tracker: { tau: 0.05, carry: false } }],
+  ['+ adaptive pitch window (= default)', 256, {}],
 ];
 
 console.log(`Simulated sweep, ${cylinders} cyl, ${idle}–${redline} rpm, ${seconds.toFixed(0)} s. gyroball: engine-tuned FFT 8192. pitch-detection: YIN.\n`);
@@ -137,3 +137,13 @@ for (const k of ['pd', 'gyro']) {
 }
 console.log('combined (both detectors, default settings; compute = both detectors, per chunk)');
 console.table({ 'combined': run(256, {}).fused });
+
+// The engine above is cleaner than a real one: its cylinders sound alike. Most real cars' don't (the
+// tones of the engine cycle are strong), which is what the first versions could not read.
+const uneven = synthesize(schedule, { fs, seconds, cylinders, cycleLevel: 0.3 });
+const now = run(256, {}, uneven), before = run(256, { pd: { clarity: 0 }, firingMargin: 0 }, uneven);
+console.log('the same drive, cylinders that do not sound alike (engine-cycle tones at 0.3, as on most real cars)');
+console.table({
+  'pitch-detection': now.pd, 'gyroball': now.gyro, 'combined': now.fused,
+  'combined, without the second try and the firing-tone check': before.fused,
+});
