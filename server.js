@@ -15,7 +15,9 @@ import { buildDr2Packet } from './src/dr2-packet.js';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = Number(process.env.HTTP_PORT || 8777);
 // The page and its control socket are for this computer only; HTTP_HOST=0.0.0.0 opens them to the network.
-const HTTP_HOST = process.env.HTTP_HOST || '127.0.0.1';
+// By default both local addresses are served (127.0.0.1 and ::1): browsers may reach "localhost" by
+// either, and a leftover server on the other one would otherwise answer in this one's place.
+const HTTP_HOSTS = process.env.HTTP_HOST ? [process.env.HTTP_HOST] : ['127.0.0.1', '::1'];
 const SIMHUB_HOST = process.env.SIMHUB_HOST || '127.0.0.1';
 const SIMHUB_PORT = Number(process.env.SIMHUB_PORT || 20777);
 const SEND_HZ = Number(process.env.SEND_HZ || 60);   // at least this often while the rpm is fresh
@@ -40,7 +42,7 @@ const resolveBare = js => js.replace(BARE, (m, pre, q, spec) =>
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
-const server = http.createServer(async (req, res) => {
+const handler = async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     let pathname = decodeURIComponent(url.pathname);
@@ -63,13 +65,20 @@ const server = http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found');
   }
-});
+};
+const servers = HTTP_HOSTS.map(() => http.createServer(handler));
 
 // ---- telemetry state (latest values from the page) ----
 const state = { rpm: 0, maxRpm: 7500, idleRpm: 900, gear: 0, source: '', updated: 0 };
 const num = (v, lo, hi, fallback) => (Number.isFinite(v) && v >= lo && v <= hi ? v : fallback);
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+for (const server of servers) {
+  server.on('upgrade', (req, socket, head) => {
+    if (new URL(req.url, 'http://localhost').pathname !== '/ws') { socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+  });
+}
 wss.on('connection', ws => {
   ws.on('message', data => {
     let m;
@@ -109,8 +118,20 @@ setInterval(() => {
   for (const c of wss.clients) if (c.readyState === 1) c.send(status);
 }, 1000);
 
-server.listen(HTTP_PORT, HTTP_HOST, () => {
-  console.log(`audio-rpm UI:           http://localhost:${HTTP_PORT}`);
-  console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, sent as it arrives, ${SEND_HZ}–${MAX_HZ} Hz)`);
-  console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);
+/** Listen on one address; resolves to false when this computer does not have it (no IPv6). */
+const listen = (server, host) => new Promise((resolve, reject) => {
+  server.once('error', err => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${HTTP_PORT} is already in use on ${host}: another audio-rpm (or another program) is running there.\n` +
+        `Find it with:  lsof -nP -iTCP:${HTTP_PORT} -sTCP:LISTEN\nthen stop it (kill <PID>), or start this one on another port: HTTP_PORT=8778 npm start`);
+      process.exit(1);
+    }
+    if (HTTP_HOSTS.length > 1 && host === '::1' && ['EADDRNOTAVAIL', 'EAFNOSUPPORT', 'EINVAL'].includes(err.code)) resolve(false);
+    else reject(err);
+  });
+  server.listen(HTTP_PORT, host, () => resolve(true));
 });
+for (let i = 0; i < servers.length; i++) await listen(servers[i], HTTP_HOSTS[i]);
+console.log(`audio-rpm UI:           http://localhost:${HTTP_PORT}`);
+console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, sent as it arrives, ${SEND_HZ}–${MAX_HZ} Hz)`);
+console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);

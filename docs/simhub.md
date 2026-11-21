@@ -17,7 +17,7 @@ SIMHUB_UDP=on SIMHUB_HOST=192.168.1.50 npm start     # IP of the Windows PC runn
 | `SIMHUB_HOST` | `127.0.0.1` | where SimHub runs |
 | `SIMHUB_PORT` | `20777` | SimHub's DiRT Rally 2.0 UDP port |
 | `HTTP_PORT` | `8777` | the page |
-| `HTTP_HOST` | `127.0.0.1` | the page and its control socket answer on this computer only; `0.0.0.0` opens them to the network |
+| `HTTP_HOST` | `127.0.0.1` and `::1` | the page and its control socket answer on this computer only (both local addresses, so `localhost` always reaches this server); `0.0.0.0` opens them to the network |
 | `SEND_HZ` | `60` | packets per second to SimHub at least, while the rpm is fresh |
 | `MAX_HZ` | `250` | each new rpm is forwarded as it arrives, up to this rate (`60` if SimHub minds) |
 | `RPM_DIVISOR` | `10` | DR2 sends rpm / 10; set to `1` if SimHub shows rpm 10× too high |
@@ -36,3 +36,7 @@ If SimHub shows nothing: run `npm run listen` on that machine with SimHub closed
 20777). If it prints RPM, the bridge works and the problem is on SimHub's side. Untested: if SimHub
 insists the game isn't running even though packets arrive, it may be checking for the game's process.
 Tools that fake DR2 telemetry for other games have shipped a stand-in `DirtRally2.exe` for this reason.
+
+If the page says **not found**, or the server stops with "port 8777 is already in use": another
+copy is still running (often from an earlier folder). `lsof -nP -iTCP:8777 -sTCP:LISTEN` shows it;
+`kill` its PID.
