@@ -8,6 +8,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "init": "node tools/init.js",
     "start": "node server.js",
     "listen": "node tools/udp-listen.js",
     "make-wav": "node tools/make-test-wav.js",
