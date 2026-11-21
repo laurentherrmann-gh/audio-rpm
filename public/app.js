@@ -406,7 +406,10 @@ setInterval(() => {
   $('level-bar').style.background = peakLevel > -3 ? 'var(--bad)' : peakLevel > -70 ? 'var(--gyro)' : 'var(--dim)';
   if (resultsThisSecond === 0) setMsg('The detectors are not receiving audio chunks (audio worklet / worker not running). Open the browser console for details.', true);
   else if (stream && silentSince && performance.now() - silentSince > 2000) {
-    setMsg(`No sound is reaching "${$('source').selectedOptions[0]?.textContent}". If it's BlackHole: set System Settings → Sound → Output to your Multi-Output Device (it feeds BlackHole), and play something.`, true);
+    const name = $('source').selectedOptions[0]?.textContent;
+    // sound that is there but very quiet is another fault than no sound, with another cure
+    if (peakLevel > -110) setMsg(`The sound reaching "${name}" is very quiet (${Math.round(peakLevel)} dB): the detectors miss the quiet parts (idle), and the gear with them. If it's BlackHole: in Audio MIDI Setup, select BlackHole 2ch and raise its output volume to the top.`, true);
+    else setMsg(`No sound is reaching "${name}". If it's BlackHole: set System Settings → Sound → Output to your Multi-Output Device (it feeds BlackHole), and play something.`, true);
   } else if ($('msg').classList.contains('error')) setMsg('');
   resultsThisSecond = 0; peakLevel = -120;
 }, 1000);

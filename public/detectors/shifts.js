@@ -36,7 +36,9 @@ export const SHIFT = Object.freeze({
   cover: 0.7,      // share of each stretch that must have readings, with no hole longer than `hole`
   hole: 0.08,
   apart: 0.5,      // s between two shifts at least
-  standRevs: 1.6,  // standing = revs below this many times the idle setting…
+  standRevs: 1.6,  // standing: revs below this × the idle setting…
+  standRed: 0.3,   // …or below this share of the redline, whichever is higher: most cars of the game idle
+                   //   at 1,300 to 2,000 rpm, far above the default idle setting (900), and nobody sets it…
   standBand: 0.06, // …steady within ±6% of their median…
   standHold: 1,    // …for this long…
   standShare: 0.8, // …for this share of the readings (the rest are strays)…
@@ -154,7 +156,7 @@ export class ShiftDetector {
     }
     xs.sort((x, y) => x - y);
     const mid = xs[n >> 1], band = Math.log(1 + p.standBand);
-    if (mid >= Math.log(p.standRevs * this.idle)) return;
+    if (mid >= Math.log(Math.max(p.standRevs * this.idle, p.standRed * this.redline))) return;
     let near = 0;
     for (const x of xs) if (Math.abs(x - mid) <= band) near++;
     if (near >= p.standShare * n) this.gear = 1;

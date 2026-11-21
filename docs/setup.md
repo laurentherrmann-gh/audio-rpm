@@ -20,6 +20,11 @@ Back to the [README](../README.md).
 
 Everything the Mac plays now also goes into the BlackHole input, which the page records.
 
+If the page says the sound is **very quiet**, BlackHole's own volume is low: in Audio MIDI Setup,
+select **BlackHole 2ch** and raise its output volume to the top (the volume keys do nothing on a
+Multi-Output Device). Quiet sound still gives revs when the engine is loud, but the detectors miss
+the idle, and the gear is counted from there.
+
 ### 2. Run it
 
 ```sh

@@ -57,7 +57,7 @@ test('the gear is unknown until the car has been standing, then counted and kept
   assert.equal(moving.out.length, 3);
   assert.equal(moving.d.gear, null);
   // standing 2 s, then four upshifts with 3 gears: stays in 3rd; then four downshifts: stays in 1st
-  const ups = [1000, 1000, 6000, 4300, 3100, 2300, 1700], downs = [2300, 3100, 4300, 6000];
+  const ups = [1000, 1000, 8600, 6700, 5200, 4100, 3200], downs = [4100, 5200, 6700, 8600];
   const { d, out } = run(step([...ups, ...downs]), 12, { idle: 900, redline: 9000, maxGear: 3 });
   assert.deepEqual(out.map(e => e.gear), [2, 3, 3, 3, 2, 1, 1, 1]);
   assert.equal(d.state().shifts, 8);
@@ -69,6 +69,8 @@ test('standing is seen through stray readings and short holes (a real idle), not
   assert.equal(run(real, 2.5).d.gear, 1);
   assert.equal(run(t => 900 * (1 + 0.15 * Math.sin(5 * t)), 4).d.gear, null, 'wandering revs are not standing');
   assert.equal(run(() => 3000, 4).d.gear, null, 'steady revs far above idle are not standing');
+  // a car that idles at 1,800 rpm, with the idle setting left at 900: standing all the same
+  assert.equal(run(() => 1800, 2.5).d.gear, 1);
   assert.equal(run(t => (t % 0.6 < 0.3 ? null : 900), 4).d.gear, null, 'too many holes: not known');
 });
 
