@@ -61,6 +61,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | `npm run learn-cars` · `npm run eval-cars` | learn the cars' sounds and tone maps (add `-- --file rec.wav` for your own recording of a car, one per camera) · measure recognition |
 | `npm run eval-dr2` | cylinder detection on the real clips |
 | `npm run eval-rpm` · `npm run eval-shifts` | is the RPM right on the real clips · are the gear shifts found |
+| `npm run record` · `npm run eval-recording` | PC version of the game: record its sound and telemetry together, one recording per car and camera · score the detectors against the game's own rpm and gear |
 | `npm run reference-rpm` | the offline reference RPM of a recording, as CSV (and a tacho track) |
 | `npm run analyze -- clip.wav` | replay any recording through the detectors |
 | `npm run listen` | stand-in for SimHub: prints the telemetry it receives |

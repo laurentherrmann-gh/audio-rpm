@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { fileFor } from '../public/cars.js';
 import { CYLINDERS } from '../public/engine-model.js';
 import { readWav, replay } from './lib/audio.js';
+import { mixIn } from './lib/mix.js';
 import { referenceRpm, referenceCsv, REF } from './lib/reference.js';
 import { loadProfiles } from '../public/detectors/car-id.js';
 import { slug } from '../public/cars.js';
@@ -32,6 +33,7 @@ const manifest = JSON.parse(readFileSync(path.resolve(ROOT, opt('manifest', 'sam
 const only = opt('only') ? new Set(opt('only').split(',').map(Number)) : null;
 const auto = opt('cylinders') === 'auto';
 const trial = opt('cfg') ? JSON.parse(opt('cfg')) : null; // settings to try, e.g. --cfg '{"tracker":{"tau":0.03}}' (writes results-rpm-some.md)
+const mix = opt('mix'); // stage sounds added to what the detectors hear, e.g. --mix speech:0,road:-6 (the reference stays the clean clip's)
 const tonesMode = opt('tones', 'learned'), BLOCK = 4; // s: with --tones split, even blocks teach and odd ones are scored
 const profilesFile = path.join(dir, 'car-profiles.json');
 const learned = tonesMode === 'learned' && !auto && existsSync(profilesFile) ? loadProfiles(JSON.parse(readFileSync(profilesFile, 'utf8'))) : null;
@@ -58,6 +60,7 @@ function grade(v, truth, around) {
 const rows = [];
 for (const { car, n, file } of todo) {
   const { fs, samples } = readWav(file), ref = referenceRpm(samples, fs, { cylinders: car.cylinders });
+  const heard = mix ? mixIn(samples, fs, mix, n) : samples;
   writeFileSync(file.replace(/\.wav$/i, '.rpm.csv'), referenceCsv(ref, { source: path.basename(file), fs })); // the reference itself, to look at
   // trusted stretches of the reference (see the top of this file)
   const N = car.cylinders, trusted = new Array(ref.rpm.length).fill(false);
@@ -77,7 +80,7 @@ for (const { car, n, file } of todo) {
     const tally = Object.fromEntries(KEYS.map(k => [k, {}])), pace = { steady: [0, 0], moving: [0, 0] }; // pace: [steps, steps where the combined rpm is right]
     let scored = 0;
     const cfg = { cylinders: auto ? 'auto' : car.cylinders, autoCandidates: CYLINDERS.filter(c => c <= 8), idle: 800, redline: 9000, carKey: key, ...(car.scale && !auto ? { scale: { gyro: car.scale, pd: car.scale } } : null), ...trial };
-    replay(samples, fs, cfg, (t, r) => {
+    replay(heard, fs, cfg, (t, r) => {
       const truth = at(t);
       if (truth === null || !keep(t)) return;
       scored++;
@@ -123,7 +126,7 @@ const mapNote = auto ? '' : splitRun
   ? ` Tone maps: each car's was learned from every other ${BLOCK} s of its clip; only the rest is scored, first without the maps, then with them.`
   : mapped ? ` With the tone maps of ${mapped} cars from car-profiles.json, which were learned from these same clips (flattering: --tones split is the fair test, --tones off is without).` : ' Without tone maps.';
 const lines = [
-  `# DiRT Rally 2.0 cars: is the rpm right? ${new Date().toISOString().slice(0, 10)}`, '',
+  `# DiRT Rally 2.0 cars: is the rpm right? ${new Date().toISOString().slice(0, 10)}${mix ? ` · with stage sound mixed in (${mix})` : ''}`, '',
   `${rows.length} cars, cylinder count ${auto ? 'auto-detected' : 'set by hand'}. Each rpm is compared with a reference computed offline from the spacing of the engine's tones, at the moments where that reference is sure and plausible for the car (share of the clip in the per-car table). "Right" = within ${TOL * 100}%; "timing" = it matches the reference of up to ${NEAR} s earlier or later (lag while the revs jump); ½, ¼, ¾… = locked on a lower or higher tone of the engine.${mapNote}`, '',
   ...(splitRun ? tables(rows.map(r => r.plain), ', without the tone maps') : []),
   ...tables(rows, splitRun ? ', with the tone maps' : ''),
@@ -134,7 +137,7 @@ const lines = [
   }),
 ];
 // a run on a few cars (--only) must not replace the table of all of them
-const outFile = path.join(dir, `results-rpm${auto ? '-auto' : ''}${splitRun ? '-split' : tonesMode === 'off' && !auto ? '-plain' : ''}${only || trial ? '-some' : ''}.md`);
+const outFile = path.join(dir, `results-rpm${auto ? '-auto' : ''}${splitRun ? '-split' : tonesMode === 'off' && !auto ? '-plain' : ''}${mix ? '-mix' : ''}${only || trial ? '-some' : ''}.md`);
 writeFileSync(outFile, lines.join('\n') + '\n');
 console.log('\n' + lines.slice(4, 4 + 9 * (splitRun ? 2 : 1) * groups.length).filter(l => /all cars|^\| (combined|pitch|gyroball|\|)|^Combined/.test(l)).slice(0, splitRun ? 12 : 6).join('\n'));
 console.log(`Wrote ${path.relative(ROOT, outFile)}`);

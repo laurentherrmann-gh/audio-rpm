@@ -122,3 +122,47 @@ recording is kept as its own map, and the one that fits what is heard answers, s
 selected while playing: record each car you drive once per camera you use (● Rec in the page with
 the car picked, a minute of normal driving through the gears), and add it with `--file`. Learning a
 recording again replaces what was learned from the file of that name.
+
+### Recording your own driving with the game's telemetry (PC version)
+
+The clips above are other people's recordings of the engine alone, and their truth is worked out
+from the sound. The PC version of the game sends its own rpm and gear over UDP, 60 times a second:
+recorded together with the sound, that is a truth that needs no reference, for your car, your
+camera and your driving. (Record on the PC, play where you like.)
+
+1. In `Documents/My Games/DiRT Rally 2.0/hardwaresettings/hardware_settings_config.xml`, set
+   `<udp enabled="true" extradata="3" ip="127.0.0.1" port="20777" delay="1" />`. Under CrossOver the
+   game shares the Mac's network: `127.0.0.1` is the Mac.
+2. Route the sound as for the page (Multi-Output Device with BlackHole, see [setup.md](setup.md)).
+   The terminal needs the permission to use the microphone (System Settings → Privacy & Security →
+   Microphone): macOS counts BlackHole as one.
+3. Check that packets come: `npm run listen` prints the game's rpm and gear once you are on a stage.
+   Stop it again (it holds the port).
+4. Record, one recording per car and camera:
+
+   ```sh
+   npm run record -- --car "Ford Fiesta R5" --camera bonnet
+   ```
+
+   It prints the sound's level, the packets per second, the game's rpm, gear and speed every second.
+   Start it before the stage's start line, drive, stop with Ctrl-C. SimHub wanting the same port:
+   give SimHub another one and add `--forward 127.0.0.1:20778`. `npm run record -- --list` shows
+   the audio inputs if BlackHole is not found.
+5. Score it:
+
+   ```sh
+   npm run eval-recording -- recordings/ford-fiesta-r5--bonnet--20261122-101500.wav
+   ```
+
+   rpm right (combined, each detector, steady and moving), gear right, shifts found and false, when
+   the car was seen standing, each against the game's own values. The report is written beside the
+   recording (`.report.md`).
+
+A recording is four files in `recordings/` (not in the repository): the sound (`.wav`, mono 32-bit
+float), the telemetry on the sound's clock (`.telemetry.csv`: rpm, gear, speed, pedals, steering),
+the packets as they came (`.telemetry.bin`), and what it is (`.json`). The sound reaches the recorder
+a little after the packets, by a constant the recorder cannot know; `eval-recording` measures it
+(the delay at which the combined rpm agrees best with the telemetry) and takes it off.
+
+The recorder has been tested with a stand-in for the sound and simulated packets, not yet with the
+game on a Mac: the ffmpeg line that reads BlackHole is the part that has not run for real.

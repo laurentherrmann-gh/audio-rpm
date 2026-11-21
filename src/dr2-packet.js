@@ -15,6 +15,9 @@ export const FIELD = Object.freeze({
   totalDistance: 3, // m
   speed: 7,         // m/s
   throttle: 29,     // 0..1
+  steer: 30,        // −1..1
+  brake: 31,        // 0..1
+  clutch: 32,       // 0..1
   gear: 33,         // 0 = neutral, -1 (or 10) = reverse
   lap: 36,
   rpm: 37,          // rpm / divisor
@@ -61,5 +64,10 @@ export function parseDr2Packet(buf, { rpmDivisor = 10 } = {}) {
     maxRpm: get('maxRpm') * rpmDivisor,
     idleRpm: get('idleRpm') * rpmDivisor,
     maxGears: get('maxGears'),
+    throttle: get('throttle'),
+    steer: get('steer'),
+    brake: get('brake'),
+    clutch: get('clutch'),
+    distance: get('lapDistance'),
   };
 }

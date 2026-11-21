@@ -22,7 +22,9 @@
     "test:ui": "node test/ui/smoke.mjs",
     "eval-rpm": "node tools/eval-rpm.js",
     "eval-shifts": "node tools/eval-shifts.js",
-    "reference-rpm": "node tools/reference-rpm.js"
+    "reference-rpm": "node tools/reference-rpm.js",
+    "record": "node tools/record.js",
+    "eval-recording": "node tools/eval-recording.js"
   },
   "dependencies": {
     "pitch-detection": "^1.0.0",

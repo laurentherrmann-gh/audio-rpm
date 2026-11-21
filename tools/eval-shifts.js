@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { fileFor, slug } from '../public/cars.js';
 import { loadProfiles } from '../public/detectors/car-id.js';
 import { readWav, replay } from './lib/audio.js';
+import { mixIn } from './lib/mix.js';
 import { referenceRpm, REF } from './lib/reference.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,6 +23,7 @@ const dir = path.resolve(ROOT, opt('dir', 'samples/dr2'));
 const manifest = JSON.parse(readFileSync(path.resolve(ROOT, opt('manifest', 'samples/dr2-cars.json')), 'utf8'));
 const only = opt('only') ? new Set(opt('only').split(',').map(Number)) : null;
 const trial = opt('cfg') ? JSON.parse(opt('cfg')) : null; // pipeline settings to try (writes results-shifts-some.md)
+const mix = opt('mix'); // stage sounds added to what the detectors hear, e.g. --mix speech:0,road:-6 (see lib/mix.js)
 // the cars' tone maps, as the page has them once npm run learn-cars has run
 const profilesFile = path.join(dir, 'car-profiles.json');
 const learned = existsSync(profilesFile) ? loadProfiles(JSON.parse(readFileSync(profilesFile, 'utf8'))) : null;
@@ -107,11 +109,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const rows = [];
   for (const { car, n, file } of todo) {
     const { fs, samples } = readWav(file), ref = referenceRpm(samples, fs, { cylinders: car.cylinders }), truth = referenceShifts(ref, car.cylinders);
-    const live = [];
-    let last = null;
+    const live = [], heard = mix ? mixIn(samples, fs, mix, n) : samples;
+    let last = null, stoodAt = null;
     const key = slug(car.car), maps = learned?.cars[key]?.tones;
-    replay(samples, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null), ...trial }, (t, r) => {
+    replay(heard, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null), ...trial }, (t, r) => {
       const e = r.gear?.last;
+      if (r.gear?.sure && stoodAt === null) stoodAt = t;
       if (e && e !== last) { last = e; live.push({ at: e.at, t: e.t, dir: e.dir, ratio: e.ratio }); }
     }, 256, pipe => { if (maps?.length) pipe.tones = { [key]: maps }; });
     const used = new Set(), found = [], missed = [];
@@ -122,7 +125,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // the other live shifts: the reference stepped there too (just not cleanly enough to be listed), did not, or cannot say
     const extra = live.filter((e, i) => !used.has(i)).map(e => ({ ...e, verdict: truth.judge(e.at, e.dir) }));
     const falseOnes = extra.filter(e => e.verdict === 'false'), alsoTrue = extra.filter(e => e.verdict === 'true').length;
-    rows.push({ n, car: car.car, cylinders: car.cylinders, truth: truth.shifts.length, found, missed, falseOnes, alsoTrue, unjudged: extra.length - falseOnes.length - alsoTrue });
+    rows.push({ n, car: car.car, cylinders: car.cylinders, truth: truth.shifts.length, found, missed, falseOnes, alsoTrue, unjudged: extra.length - falseOnes.length - alsoTrue, stoodAt });
     console.log(`${String(n).padStart(2)} ${car.car.padEnd(36)} clean shifts ${String(truth.shifts.length).padStart(2)} · found ${String(found.length).padStart(2)} · missed ${String(missed.length).padStart(2)} · other live shifts: real ${alsoTrue}, false ${falseOnes.length}, not judged ${extra.length - falseOnes.length - alsoTrue}` +
       (missed.length ? ` · missed at ${missed.map(s => s.at.toFixed(1)).join(', ')}` : '') + (falseOnes.length ? ` · false at ${falseOnes.map(s => s.at.toFixed(1)).join(', ')}` : ''));
   }
@@ -131,13 +134,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const T = sum(r => r.truth), F = sum(r => r.found.length), X = sum(r => r.falseOnes.length), A = sum(r => r.alsoTrue), U = sum(r => r.unjudged);
   const delay = med(all.map(f => f.live.t - f.ref.at)), ratioErr = med(all.map(f => Math.abs(f.live.ratio / f.ref.ratio - 1)));
   const lines = [
-    `# DiRT Rally 2.0 cars: are gear shifts found? ${new Date().toISOString().slice(0, 10)}`, '',
+    `# DiRT Rally 2.0 cars: are gear shifts found? ${new Date().toISOString().slice(0, 10)}${mix ? ` · with stage sound mixed in (${mix})` : ''}`, '',
     `${rows.length} cars, cylinder count set by hand. "Clean shifts" are taken from the offline reference rpm: the revs hold, step by a gear's worth within 0.3 s, and hold again. Every other live shift is checked against the reference at that moment: real (the revs did step that way), false (they did not), or not judged (the reference is unsure there).`, '',
-    `**${F} of ${T} clean shifts found (${T ? Math.round((100 * F) / T) : 0}%). Live shifts: ${F + A} real, ${X} false (${F + A + X ? Math.round((100 * X) / (F + A + X)) : 0}%), ${U} not judged**${delay !== null ? `; reported a median ${Math.round(delay * 1000)} ms after the shift; ratio off by a median ${(100 * ratioErr).toFixed(1)}%` : ''}.`, '',
+    `**${F} of ${T} clean shifts found (${T ? Math.round((100 * F) / T) : 0}%). Live shifts: ${F + A} real, ${X} false (${F + A + X ? Math.round((100 * X) / (F + A + X)) : 0}%), ${U} not judged**${delay !== null ? `; reported a median ${Math.round(delay * 1000)} ms after the shift; ratio off by a median ${(100 * ratioErr).toFixed(1)}%` : ''}. The car is seen standing (the gear is sure from there) on ${rows.filter(r => r.stoodAt !== null).length} of the ${rows.length} clips, on ${rows.filter(r => r.stoodAt !== null && r.stoodAt < 3).length} within 3 s.`, '',
     '| # | car | cyl | clean shifts | found | missed | other live: real | false | not judged |', '|---|---|---|---|---|---|---|---|---|',
     ...rows.map(r => `| ${r.n} | ${r.car} | ${r.cylinders} | ${r.truth} | ${r.found.length} | ${r.missed.length} | ${r.alsoTrue} | ${r.falseOnes.length} | ${r.unjudged} |`),
   ];
-  const outFile = path.join(dir, `results-shifts${only || trial ? '-some' : ''}.md`);
+  const outFile = path.join(dir, `results-shifts${mix ? '-mix' : ''}${only || trial ? '-some' : ''}.md`);
   writeFileSync(outFile, lines.join('\n') + '\n');
   console.log(`\n${lines[4]}\nWrote ${path.relative(ROOT, outFile)}`);
 }

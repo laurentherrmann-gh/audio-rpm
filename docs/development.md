@@ -43,7 +43,10 @@ tools/                       udp-listen (SimHub stand-in), make-test-wav, bench,
                              lib/quality.js (lost sound, clipping), lib/align.js (cut points vs the sound),
                              eval-rpm (is the rpm right on the real clips?), eval-shifts (are the shifts found?),
                              lib/reference.js (offline reference rpm), lib/tone-learn.js (a tone map from a recording),
-                             reference-rpm (that reference as .rpm.csv and .tacho.wav files)
+                             reference-rpm (that reference as .rpm.csv and .tacho.wav files),
+                             lib/mix.js (a co-driver's voice and road noise to mix into clips: `--mix` of eval-rpm and eval-shifts),
+                             record (the PC game's sound and UDP telemetry together), eval-recording (the detectors
+                             against that telemetry), lib/recording.js (the recording's files and clock)
 samples/dr2-cars.json        the 82 cars: chapter times, real cylinder count, engine layout (the page's car list)
 ```
 
