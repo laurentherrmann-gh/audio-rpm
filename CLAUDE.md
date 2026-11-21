@@ -53,6 +53,9 @@
   clips: the simulator's rpm is too smooth to show false shifts; but keep its tests, they caught a
   longer gap taking a lift for a shift. Anything that changes the combined rpm changes the shifts:
   re-run eval-shifts after touching the path, its look-backs or the detectors.
+  The gear is counted from 1st from the start (the lowest gear it can be), and is `sure` once the car
+  was seen standing or the count met the highest possible gear; it must never go back to showing no
+  gear at all.
   eval-shifts does not test the gear becoming known: the car stands for a second in only 3 of the 80
   clips (12 Sierra RS500, 55 Camaro, 56 Mustang GT4). That is tested in `test/shifts.test.js` (a real
   idle: stray readings, holes, readings 65 ms old); it broke once without any measured number moving.

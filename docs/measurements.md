@@ -482,15 +482,26 @@ on the throttle), which the simulator showed at once. Hence the quick-step rule,
 points of shifts found and removes a third of the false ones; placing the shift where the step is,
 not in the middle of the gap, is what brought the ratio error from 5% to 3%.
 
-**Seeing the car stand.** The gear is counted from 1st once the car has been seen standing: over
+**Counting from 1st.** The gear used to be unknown until the car had been seen standing. On the
+user's own driving that did not come (why is not known: no recording of it yet), and the tach
+showed no gear at all. The gear is now counted from 1st from the first moment,
+with the highest gear it could be kept beside it. The count is the lowest gear the car can be in:
+it is right from the start when the page was started before the car set off, and right after the
+car's next pass through 1st otherwise (the count cannot go below 1, so it catches up there). It is
+shown as sure once the car has been seen standing, or once the count and the highest possible gear
+have met (the car went all the way up the gearbox); until then the tach shows it dim, as "2?".
+SimHub gets the count either way.
+
+**Seeing the car stand.** The car is seen standing when, over
 one second, the median of the readings is below 30% of the redline (or 1.6 × the idle setting, if
 that is higher) and 80% of them are within 6% of it, with no hole longer than 0.25 s. The share of
 the redline came second: with the idle setting alone, left at its 900 rpm, a car had to idle below
 1,440 rpm to be seen standing, and the lowest steady second in the 80 clips is below that for 18
-cars only (most idle at 1,300 to 2,000 rpm). The gear became known on 3 clips; it now does on 36,
+cars only (most idle at 1,300 to 2,000 rpm). The car was seen standing on 3 clips; it now is on 36,
 on 34 of them within 3 s of the start. The other 44 do not idle for a second. When another car
-is picked, or recognised after a first one, the count is forgotten: the gear is unknown again until
-that car stands. The first build with the path lost the gear altogether on
+is picked, or recognised after a first one, the count starts again from 1st, not sure.
+
+The first build with the path lost the gear altogether on
 real sound, for two reasons that the 80 clips could not show (they are showcases: the car stands
 for a second in 3 of them). The shift detector read the path 50 ms back, and at low revs
 pitch-detection's window is long: its reading is 65 ms old when it comes, so the detector was given

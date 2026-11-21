@@ -23,7 +23,7 @@
 // One RPM: fusion.js combines the two detectors into `fused` (the higher octave when they are an
 // octave apart, pitch-detection's timing).
 // Gear: detectors/shifts.js finds gear shifts in the fused rpm and counts the gear from them
-// (`maxGear` gears; unknown until the car has been standing).
+// (`maxGear` gears; counted from 1st, sure once the car has been seen standing).
 import rfft from 'fourier-transform';
 import { analyseSpectrum } from './detectors/gyroball-core.js';
 import { detectPitch } from './detectors/pd-core.js';

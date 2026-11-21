@@ -51,11 +51,11 @@ test('the pitch detector slipping an octave for a moment is not a shift', () => 
   assert.equal(run(t => (t > 2 ? 3500 : 5000), 4).out.length, 1); // a real drop of 30%
 });
 
-test('the gear is unknown until the car has been standing, then counted and kept within 1…max', () => {
+test('the gear is counted from 1st, sure once the car has been standing, and kept within 1…max', () => {
   const step = (levels, each = 1) => t => levels[Math.min(levels.length - 1, Math.floor(t / each))];
   const moving = run(step([5000, 3500, 5000, 3500]), 4);
   assert.equal(moving.out.length, 3);
-  assert.equal(moving.d.gear, null);
+  assert.deepEqual([moving.d.gear, moving.d.state().sure], [2, false], 'counted from 1st (up, down, up), not sure');
   // standing 2 s, then four upshifts with 3 gears: stays in 3rd; then four downshifts: stays in 1st
   const ups = [1000, 1000, 8600, 6700, 5200, 4100, 3200], downs = [4100, 5200, 6700, 8600];
   const { d, out } = run(step([...ups, ...downs]), 12, { idle: 900, redline: 9000, maxGear: 3 });
@@ -63,15 +63,26 @@ test('the gear is unknown until the car has been standing, then counted and kept
   assert.equal(d.state().shifts, 8);
 });
 
+test('never seen standing: the count is the lowest gear it can be, right after a pass through 1st, sure after a run up the box', () => {
+  const step = (levels, each = 1) => t => levels[Math.min(levels.length - 1, Math.floor(t / each))];
+  // heard from 3rd gear on: down, down (now really in 1st), then up, up
+  const mid = run(step([4000, 5200, 6800, 5200, 4000]), 5, { idle: 900, redline: 9000, maxGear: 5 });
+  assert.deepEqual(mid.out.map(e => e.gear), [1, 1, 2, 3]);
+  assert.equal(mid.d.state().sure, false);
+  // four upshifts with 5 gears: it can only be 5th
+  const up = run(step([8600, 6700, 5200, 4100, 3200]), 5, { idle: 900, redline: 9000, maxGear: 5 });
+  assert.deepEqual(up.out.map(e => [e.gear, e.sure]), [[2, false], [3, false], [4, false], [5, true]]);
+});
+
 test('standing is seen through stray readings and short holes (a real idle), not through wandering or high revs', () => {
   // one reading in 15 is 10% off, and now and then 0.15 s go without a reading
   const real = t => (Math.floor(t / dt) % 15 === 7 ? 990 : Math.floor(t * 2) % 3 === 2 && t % 0.5 < 0.15 ? null : 900 + 15 * Math.sin(40 * t));
-  assert.equal(run(real, 2.5).d.gear, 1);
-  assert.equal(run(t => 900 * (1 + 0.15 * Math.sin(5 * t)), 4).d.gear, null, 'wandering revs are not standing');
-  assert.equal(run(() => 3000, 4).d.gear, null, 'steady revs far above idle are not standing');
+  assert.equal(run(real, 2.5).d.state().sure, true);
+  assert.equal(run(t => 900 * (1 + 0.15 * Math.sin(5 * t)), 4).d.state().sure, false, 'wandering revs are not standing');
+  assert.equal(run(() => 3000, 4).d.state().sure, false, 'steady revs far above idle are not standing');
   // a car that idles at 1,800 rpm, with the idle setting left at 900: standing all the same
-  assert.equal(run(() => 1800, 2.5).d.gear, 1);
-  assert.equal(run(t => (t % 0.6 < 0.3 ? null : 900), 4).d.gear, null, 'too many holes: not known');
+  assert.equal(run(() => 1800, 2.5).d.state().sure, true);
+  assert.equal(run(t => (t % 0.6 < 0.3 ? null : 900), 4).d.state().sure, false, 'too many holes: not known');
 });
 
 test('pipeline: an engine with a rough idle (long pitch window, readings 65 ms old): the shift detector is fed', () => {
@@ -85,7 +96,7 @@ test('pipeline: an engine with a rough idle (long pitch window, readings 65 ms o
     pipe.push(c, c);
     const r = pipe.step(end / fs);
     if (r.pd?.raw > 0) { n++; if (r.pd.windowDelayMs > 50) old++; }
-    if (r.gear.gear !== null && at === null) at = end / fs;
+    if (r.gear.sure && at === null) at = end / fs;
   }
   assert.ok(old > 0.5 * n, `the test is about readings older than the look-back: ${old} of ${n}`);
   const fed = pipe.shifts.hist.length; // readings of the last second (one step is 5.3 ms)
@@ -93,13 +104,13 @@ test('pipeline: an engine with a rough idle (long pitch window, readings 65 ms o
   assert.ok(at !== null && at < 2, `seen standing after ${at} s`);
 });
 
-test('pipeline: another car, picked or recognised, starts again from an unknown gear', () => {
+test('pipeline: another car, picked or recognised, starts again from 1st, not sure', () => {
   const fs = 48000, pipe = new Pipeline(fs, 1, { cylinders: 4, carKey: 'a' });
   pipe.shifts.gear = 3;
   pipe.configure({ idle: 1000, carKey: 'a' }); // a setting changed, same car
   assert.equal(pipe.shifts.gear, 3);
   pipe.configure({ carKey: 'b' });
-  assert.equal(pipe.shifts.gear, null, 'another car picked');
+  assert.deepEqual([pipe.shifts.gear, pipe.shifts.state().sure], [1, false], 'another car picked');
   // recognising: the first car named keeps the count (it is the car that was being driven), the next one does not
   let name = null;
   pipe.configure({ car: 'auto', carKey: null });
@@ -111,7 +122,7 @@ test('pipeline: another car, picked or recognised, starts again from an unknown 
   hear(3);
   assert.equal(pipe.shifts.gear, 2);
   name = 'b'; hear(4);
-  assert.equal(pipe.shifts.gear, null, 'another car recognised');
+  assert.deepEqual([pipe.shifts.gear, pipe.shifts.state().sure], [1, false], 'another car recognised');
 });
 
 test('pipeline: shifts and gear from the sound of the stage drive', () => {

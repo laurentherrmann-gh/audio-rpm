@@ -535,12 +535,13 @@ function drawTach() {
   g.font = '12px system-ui'; g.fillStyle = css('--dim');
   g.fillText('rpm · ' + (k === 'gyro' ? 'gyroball' : k === 'pd' ? 'pitch-detection' : 'combined'), cx, cy + R * 0.62 + 18);
   g.fillText('× 1000', cx, cy - R * 0.38);
-  // gear, counted from the shifts ("?" until the car has been standing); an arrow marks a shift
+  // gear, counted from 1st by the shifts; dim with a "?" while the car could be in a higher one (it
+  // has not been seen standing yet); an arrow marks a shift
   if (running && last?.gear) {
-    const gear = last.gear.gear, fresh = lastShift && performance.now() - lastShift.wall < 600;
+    const { gear, sure } = last.gear, fresh = lastShift && performance.now() - lastShift.wall < 600;
     g.font = `700 ${Math.round(R * 0.17)}px system-ui`;
-    g.fillStyle = gear === null ? css('--dim') : fresh ? css('--accent') : css('--text');
-    g.fillText((gear ?? '?') + (fresh ? (lastShift.dir === 'up' ? ' ▲' : ' ▼') : ''), cx, cy + R * 0.27);
+    g.fillStyle = fresh ? css('--accent') : sure ? css('--text') : css('--dim');
+    g.fillText(gear + (sure ? '' : '?') + (fresh ? (lastShift.dir === 'up' ? ' ▲' : ' ▼') : ''), cx, cy + R * 0.27);
     g.font = '12px system-ui'; g.fillStyle = css('--dim');
     g.textAlign = 'right';
     g.fillText('gear', cx - R * 0.14, cy + R * 0.27);
