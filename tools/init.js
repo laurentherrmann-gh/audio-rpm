@@ -1,19 +1,31 @@
 // Gets a fresh clone (or an updated one) ready to run. Safe to run again at any time: each step
 // is skipped when it is already done.
-//   npm run init                               dependencies, checks, car profiles if the clips are there
-//   npm run init -- --source ~/Movies/rec.m4a  also cut your recording of the car-sound video into clips
+//   npm run init                               dependencies, checks, car clips (it asks for your recording of
+//                                              the car-sound video; Enter takes ~/Desktop/recording.m4a), car profiles
+//   npm run init -- --source ~/Movies/rec.m4a  the same without the question
 //   npm run init -- --tests                    also install what the browser test needs (Playwright + Chromium)
+// Questions are only asked in a terminal; run from a script it asks nothing and skips the cutting.
 // It installs nothing outside this folder: BlackHole and ffmpeg are only checked, with the command to
 // install them. (Not `npm init`, which is npm's own command for creating a package.json.)
 // No imports from node_modules here: this has to run before they exist.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2), has = f => argv.includes(f);
-const source = has('--source') ? argv[argv.indexOf('--source') + 1] : null;
+let source = has('--source') ? argv[argv.indexOf('--source') + 1] : null;
+const DEFAULT_SOURCE = '~/Desktop/recording.m4a';
+const home = p => p.replace(/^~(?=\/|$)/, process.env.HOME ?? '~');
+/** Ask in the terminal; null when there is no terminal to ask in. */
+let rl = null;
+async function ask(question) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+  rl ??= createInterface({ input: process.stdin, output: process.stdout });
+  try { return (await rl.question(question)).trim(); } catch { console.log(); return null; } // Ctrl+D or Ctrl+C: no answer
+}
 const at = (...p) => path.join(ROOT, ...p), mtime = f => (existsSync(f) ? statSync(f).mtimeMs : 0);
 const run = (cmd, args) => spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32' }).status === 0;
 const quiet = (cmd, args) => { const r = spawnSync(cmd, args, { encoding: 'utf8' }); return r.status === 0 ? r.stdout : null; };
@@ -52,15 +64,32 @@ else { console.log('ffmpeg: not found. Only needed to cut a recording of the car
 step('Car clips (samples/dr2/)');
 const cars = JSON.parse(readFileSync(at('samples', 'dr2-cars.json'), 'utf8')).cars;
 const clips = () => (existsSync(at('samples', 'dr2')) ? readdirSync(at('samples', 'dr2')).filter(f => /^\d\d-.*\.wav$/.test(f) && !f.endsWith('.tacho.wav')) : []);
+if (!source) {
+  // ask for the recording: always when there are no clips, and only on request when there are
+  const n = clips().length;
+  let wanted = n === 0;
+  if (n) {
+    console.log(`${n} of ${cars.length} clips are there.`);
+    wanted = /^y/i.test((await ask('Cut them again from a recording? (y/N) ')) ?? '');
+  } else console.log('None yet. They are cut from your own recording of the "All Cars Sounds" video (docs/car-sounds.md).');
+  if (wanted) {
+    const answer = await ask(`Recording of the video (Enter = ${DEFAULT_SOURCE}, s = skip): `);
+    if (answer !== null && !/^s(kip)?$/i.test(answer)) source = answer || DEFAULT_SOURCE;
+  }
+}
 if (source) {
-  const file = path.resolve(source.replace(/^~(?=\/)/, process.env.HOME ?? '~'));
-  if (!existsSync(file)) { console.log(`${file}: no such file.`); todo.push('npm run init -- --source <your recording of the video>'); }
+  const file = path.resolve(home(source.replace(/^(['"])(.*)\1$/, '$2').replace(/\\ /g, ' ')));
+  if (!existsSync(file)) {
+    console.log(`${file}: no such file.`);
+    if (clips().length) done.push(`${clips().length} car clips (kept)`);
+    todo.push(`put your recording at ${DEFAULT_SOURCE} (or give its path) and run npm run init again`);
+  }
   else if (run('npm', ['run', '-s', 'fetch-dr2', '--', '--source', file, '--offset', 'auto'])) done.push(`${clips().length} car clips cut from ${path.basename(file)}`);
   else todo.push('the recording could not be cut: read the messages above (npm run fetch-dr2 -- --source … --check only checks it)');
-} else if (clips().length) { console.log(`${clips().length} of ${cars.length} clips are there.`); done.push(`${clips().length} car clips`); }
+} else if (clips().length) done.push(`${clips().length} car clips`);
 else {
-  console.log('None yet. They are cut from your own recording of the "All Cars Sounds" video and are only\nneeded for car recognition and for measuring on real cars (eval-dr2, eval-cars, eval-rpm).');
-  todo.push('optional: npm run init -- --source <your recording of the video>');
+  console.log('Skipped. The clips are only needed for car recognition and for measuring on real cars\n(eval-dr2, eval-cars, eval-rpm); the page works without them.');
+  todo.push('optional: npm run init again with your recording of the video');
 }
 
 // 5. Car profiles (what "Auto · recognise" in the page needs), learned from the clips
@@ -87,4 +116,5 @@ if (has('--tests')) {
 console.log('\n— Summary');
 for (const d of done) console.log(`  ✓ ${d}`);
 for (const t of todo) console.log(`  → ${t}`);
+rl?.close();
 console.log('\nStart with:  npm start   then open http://localhost:8777 in Chrome.');

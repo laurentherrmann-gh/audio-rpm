@@ -19,9 +19,10 @@ Open **http://localhost:8777** in Chrome and press **Start**. The **Simulated en
 setup. To listen to the Mac's own sound, install [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole)
 (`brew install blackhole-2ch`) and route the sound through it: [docs/setup.md](docs/setup.md).
 
-`npm run init` installs the dependencies, checks for BlackHole and ffmpeg, and learns the car profiles
-if the car clips are there. Run it again whenever you like; it skips what is done. (It is not
-`npm init`, which is npm's own command.)
+`npm run init` installs the dependencies, checks for BlackHole and ffmpeg, asks for your recording of
+the car-sound video to cut it into one clip per car (Enter takes `~/Desktop/recording.m4a`, `s` skips:
+the page works without the clips), and learns the car profiles from them. Run it again whenever you
+like; it skips what is done. (It is not `npm init`, which is npm's own command.)
 
 ## Use
 
@@ -47,7 +48,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 
 | command | what it does |
 |---|---|
-| `npm run init` | get a clone ready (`-- --source rec.m4a` also cuts your recording of the car-sound video into clips; `-- --tests` installs the browser test's needs) |
+| `npm run init` | get a clone ready (`-- --source rec.m4a` gives the recording without being asked; `-- --tests` installs the browser test's needs) |
 | `npm start` | the page and the SimHub bridge |
 | `npm test` · `npm run test:ui` | unit tests · the page in a real browser |
 | `npm run bench` | lag and error on the simulator (`-- --auto` cylinder detection, `-- --shifts` gear shifts) |
