@@ -59,3 +59,17 @@ test('an engine whose cylinders do not sound alike: the short pitch window finds
   assert.ok(now.right > 0.9, `with the second try: right ${Math.round(100 * now.right)}% of the time`);
   assert.ok(now.fused > 0.88, `combined rpm right ${Math.round(100 * now.fused)}% of the time`);
 });
+
+test('the input volume does not matter: the same sound 80 dB quieter gives the same rpm', () => {
+  // a low volume on the way in (BlackHole's own slider) once silenced pitch-detection wherever the
+  // engine was quiet: the idle went, and the gear with it
+  const fs = 48000, schedule = [[0, 900], [1.5, 900], [3, 6000], [3.1, 4300], [4.5, 6500]];
+  const loud = synthesize(schedule, { fs, seconds: 4.5, cylinders: 4, cycleLevel: 0.3 }), quiet = loud.map(v => v * 1e-4);
+  const run = x => { const out = []; replay(x, fs, { cylinders: 4, idle: 900, redline: 7500 }, (t, r) => out.push([r.fused.rpm, r.pd?.raw ?? 0, r.gear.gear, r.gear.sure])); return out; };
+  const a = run(loud), b = run(quiet);
+  let same = 0, pd = 0;
+  for (let i = 0; i < a.length; i++) { if (Math.abs((a[i][0] || 0) - (b[i][0] || 0)) <= 0.005 * Math.max(1, a[i][0] || 0) && a[i][2] === b[i][2] && a[i][3] === b[i][3]) same++; if (b[i][1] > 0) pd++; }
+  assert.ok(same > 0.99 * a.length, `the same at ${(100 * same / a.length).toFixed(1)}% of the steps`);
+  assert.ok(pd > 0.8 * a.length, 'pitch-detection reads the quiet sound');
+  assert.ok(b.some(x => x[3]), 'and the car is seen standing in it');
+});

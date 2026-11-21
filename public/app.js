@@ -370,7 +370,7 @@ function onResult(e) {
   const wall = performance.now();
   resultsThisSecond++;
   peakLevel = Math.max(peakLevel, m.levelDb);
-  if (m.levelDb > -70) silentSince = 0; else if (!silentSince) silentSince = wall;
+  if (m.levelDb > -100) silentSince = 0; else if (!silentSince) silentSince = wall; // quiet is fine (the detectors don't mind the volume); silent is not
   const transitMs = (tNow - m.t) * 1000; // chunk's last sample → result on the page
 
   for (const k of ['gyro', 'pd']) {
@@ -403,13 +403,10 @@ setInterval(() => {
   $('rate').textContent = resultsThisSecond;
   $('level').textContent = peakLevel <= -119 ? 'silent' : Math.round(peakLevel) + ' dB';
   $('level-bar').style.width = Math.max(0, Math.min(100, (peakLevel + 80) * 1.25)) + '%';
-  $('level-bar').style.background = peakLevel > -3 ? 'var(--bad)' : peakLevel > -70 ? 'var(--gyro)' : 'var(--dim)';
+  $('level-bar').style.background = peakLevel > -3 ? 'var(--bad)' : peakLevel > -100 ? 'var(--gyro)' : 'var(--dim)';
   if (resultsThisSecond === 0) setMsg('The detectors are not receiving audio chunks (audio worklet / worker not running). Open the browser console for details.', true);
   else if (stream && silentSince && performance.now() - silentSince > 2000) {
-    const name = $('source').selectedOptions[0]?.textContent;
-    // sound that is there but very quiet is another fault than no sound, with another cure
-    if (peakLevel > -110) setMsg(`The sound reaching "${name}" is very quiet (${Math.round(peakLevel)} dB): the detectors miss the quiet parts (idle), and the gear with them. If it's BlackHole: in Audio MIDI Setup, select BlackHole 2ch and raise its output volume to the top.`, true);
-    else setMsg(`No sound is reaching "${name}". If it's BlackHole: set System Settings → Sound → Output to your Multi-Output Device (it feeds BlackHole), and play something.`, true);
+    setMsg(`No sound is reaching "${$('source').selectedOptions[0]?.textContent}". If it's BlackHole: set System Settings → Sound → Output to your Multi-Output Device (it feeds BlackHole), and play something.`, true);
   } else if ($('msg').classList.contains('error')) setMsg('');
   resultsThisSecond = 0; peakLevel = -120;
 }, 1000);

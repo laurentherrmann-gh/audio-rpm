@@ -47,7 +47,7 @@ Measured on recordings of the game's 82 cars ([docs/measurements.md](docs/measur
 | RPM, car picked | right (within 6%) 92% of the scored time (91% without the car's tone map), 96% while the revs are steady, 72% while they jump. It describes the moment 30 ms ago ("Look-back" in the settings) |
 | Cylinder count from the sound | 72 of 80 cars right, 8 undecided, none wrong |
 | Car recognised from its sound | 72 of 82 right, 1 wrong, 9 not sure |
-| Gear shifts | 84% of the clean shifts found, 7% of the reported ones false: the counted gear drifts after a few shifts |
+| Gear shifts | 85% of the clean shifts found, 7% of the reported ones false: the counted gear drifts after a few shifts |
 
 ## Commands
 

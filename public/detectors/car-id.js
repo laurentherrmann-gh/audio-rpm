@@ -18,7 +18,8 @@ export const CAR_ID = Object.freeze({
   window: 0.17,     // s of sound per snapshot (8192 samples at 48 kHz)
   every: 0.1,       // s between snapshots
   rangeDb: 50,      // bands more than this below the loudest count as that floor
-  silentDb: -60,    // snapshots quieter than this (dBFS rms, in the bands) are not used
+  silentDb: -60,    // snapshots quieter than this (dBFS rms, in the bands) are not used (learning; live it is…
+  silentBelow: 40,  //   …this many dB below the loudest sound heard, whatever the input's volume)
   clipDb: 12,       // one band can't count for more than this difference (other sounds in the mix)
   K: 32,            // snapshots kept per car and per recording
   tau: 6,           // s: how long sound counts as evidence
@@ -53,7 +54,7 @@ function layout(binHz, bins) {
  * matter). `power[i]` = squared amplitude of bin i of a Blackman-windowed frame, `binHz` its bin width.
  * @returns {Float32Array|null} null when the sound is too quiet to say anything
  */
-export function snapshot(power, binHz) {
+export function snapshot(power, binHz, silentDb = CAR_ID.silentDb) {
   const l = layout(binHz, power.length);
   if (!l) return null;
   const v = new Float32Array(BANDS);
@@ -66,7 +67,7 @@ export function snapshot(power, binHz) {
     if (v[b] > max) max = v[b];
   }
   // amplitude² / 2 = a tone's mean square; 0.3046 = Blackman's power gain
-  if (10 * Math.log10(Math.max(total / (2 * 0.3046), 1e-20)) < CAR_ID.silentDb) return null;
+  if (10 * Math.log10(Math.max(total / (2 * 0.3046), 1e-20)) < silentDb) return null;
   let mean = 0;
   for (let b = 0; b < BANDS; b++) { v[b] = Math.max(v[b], max - CAR_ID.rangeDb); mean += v[b]; }
   mean /= BANDS;
@@ -86,12 +87,12 @@ function blackman(n) {
 }
 
 /** Snapshot of a frame of audio (length carFftSize(fs)). The one function live and learning share. */
-export function snapshotOf(frame, fs) {
+export function snapshotOf(frame, fs, silentDb = CAR_ID.silentDb) {
   const N = frame.length, w = blackman(N), x = new Float64Array(N);
   for (let i = 0; i < N; i++) x[i] = frame[i] * w[i];
   const mag = rfft(x), power = new Float64Array(N / 2);
   for (let i = 0; i < N / 2; i++) power[i] = mag[i] * mag[i]; // rfft gives amplitudes (unit sine → 1)
-  return snapshot(power, fs / N);
+  return snapshot(power, fs / N, silentDb);
 }
 
 /** Every snapshot of a recording (one per CAR_ID.every), silent moments left out. */

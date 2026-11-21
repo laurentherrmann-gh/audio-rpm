@@ -185,6 +185,28 @@ shift; with pitch-detection alone one was missed and two were misread. What is l
 revving in neutral on the limiter, where the readings also hop to three quarters of the revs, a ratio a
 real shift can have. One car and 24 seconds: these rules will be re-measured on the full set.
 
+### The input's volume
+
+Nothing in the detectors may depend on how loud the sound arrives, and one thing did:
+pitch-detection took a frame below −80 dBFS for silence, and car recognition one below −60. With the
+sound at an ordinary level that is silence indeed. With BlackHole's own volume slider low (the
+user's Mac: the page read the revs of a loud engine and warned that no sound was reaching it), the
+idle fell under the line: no pitch readings there, and no gear. Silence is now judged against the
+loudest chunk heard lately (60 dB below it for pitch-detection, 40 dB for car recognition; "lately"
+fades by half in 20 s). The same clip, quieter:
+
+| Ford Sierra Cosworth RS500, input lowered by | same combined rpm as at full volume | pitch readings | car recognised | car seen standing |
+|---|---|---|---|---|
+| 30 dB, before | 79% of the time | 5,664 | yes | after 0.9 s |
+| 60 dB, before | 21% | 558 | no | after 26 s |
+| 30 dB, now | 99.9% | 5,638 | yes | after 0.9 s |
+| 60 dB, now | 99.9% | 5,638 | yes | after 0.9 s |
+| 90 dB, now | 97% | 5,631 | yes | after 0.9 s |
+
+At full volume it reads 5,638 pitch readings and sees the car standing after 0.9 s. The numbers of
+the 80 clips do not move (rpm right 92%, car named 72 of 82, cylinder count 72 of 80); the shifts
+move by three (309 of 363 found, was 306).
+
 ### The path: looking back a little
 
 The rules decide reading by reading, and they put every reading at "now". Neither is right. A
@@ -460,10 +482,10 @@ launch).
 
 | | first detector (a fast, short change of the rpm) | break between two lines, on the rules' rpm | **now**: the same on the path, longer gap, quick step |
 |---|---|---|---|
-| clean shifts found | 243 of 313 (78%) | 300 of 363 (83%) | **306 of 363 (84%)** |
-| live shifts judged false | 214 of 644 (33%) | 46 of 445 (10%) | **29 of 424 (7%)** |
-| live shifts not judged | 1,584 (20 per clip) | 527 (7 per clip) | 492 (6 per clip) |
-| reported after the shift | 225 ms | 314 ms | 364 ms |
+| clean shifts found | 243 of 313 (78%) | 300 of 363 (83%) | **309 of 363 (85%)** |
+| live shifts judged false | 214 of 644 (33%) | 46 of 445 (10%) | **31 of 433 (7%)** |
+| live shifts not judged | 1,584 (20 per clip) | 527 (7 per clip) | 517 (6 per clip) |
+| reported after the shift | 225 ms | 314 ms | 366 ms |
 | ratio off by (median) | 6.4% | 5.0% | **3.3%** |
 
 (The first column was measured before the reference was corrected and the tone maps added, which is
@@ -511,7 +533,7 @@ again. The detector now reads the path at the newest moment a reading speaks of 
 more), and standing is judged on the second as a whole. On the three clips: Ford Sierra Cosworth
 RS500 in 1st after 0.8 s (never, in that build), Chevrolet Camaro GT4.R after 6.1 s (24.8 s), Ford
 Mustang GT4 after 6.5 s (6.7 s); the rules gave 1.3, 6.5 and 6.6 s. Shifts found and false shifts
-are unchanged by it (306 of 363, 7%).
+are unchanged by it (306 of 363, 7%, at the time).
 
 What this means for the gear on the tach: on a real stage it is right after a standstill and for the
 next few shifts, then drifts: one shift in six is missed, one reported shift in fourteen is false,

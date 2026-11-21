@@ -33,6 +33,9 @@ import { TONES, orderLevels, toneDistance } from './detectors/tones.js';
 import { ShiftDetector } from './detectors/shifts.js';
 import { Fusion } from './fusion.js';
 import { PathTracker, PATH } from './path.js';
+
+const LOUD_HALF = 20; // s for the remembered loudness to fade by half
+const QUIET_DB = 60;  // a frame this far below it is silence (was: below −80 dBFS, with the engine at −20)
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -125,6 +128,7 @@ export class Pipeline {
     this.path = new PathTracker();
     this.shiftAt = -Infinity; // the last moment given to the shift detector
     this.gearCar = null;      // the recognised car the gear is being counted for
+    this.loud = 0;            // rms of the loudest chunk heard lately: what "quiet" is measured against
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -173,7 +177,7 @@ export class Pipeline {
     if (!this.cars || this.cfg.car !== 'auto' || tEnd - this.carEval < CAR_ID.every) return;
     this.carEval = tEnd;
     const N = carFftSize(this.fs);
-    this.cars.push(tEnd, snapshotOf(this.raw.latest(N, this.buf('cf', N)), this.fs));
+    this.cars.push(tEnd, snapshotOf(this.raw.latest(N, this.buf('cf', N)), this.fs, 20 * Math.log10(this.quiet(CAR_ID.silentBelow))));
     // another car recognised than the one the gear was counted for: start again from "?"
     const named = this.cars.state().car;
     if (named && this.gearCar && named !== this.gearCar) this.shifts.forget();
@@ -356,7 +360,17 @@ export class Pipeline {
   push(raw, dec) {
     this.raw.push(raw);
     if (dec) this.dec.push(dec);
+    // How loud the input is, so that nothing downstream depends on its volume: silence is judged
+    // against the loudest chunk heard lately (it fades by half in 20 s), not against a fixed level.
+    // A low volume on the way in (BlackHole's own slider) used to silence pitch-detection at idle.
+    let sum = 0;
+    for (let i = 0; i < raw.length; i++) sum += raw[i] * raw[i];
+    const rms = Math.sqrt(sum / (raw.length || 1));
+    this.loud = Math.max(rms, this.loud * 0.5 ** (raw.length / this.fs / LOUD_HALF));
   }
+
+  /** rms below which a frame is silence: `db` below the loudest sound heard lately. */
+  quiet(db = QUIET_DB) { return Math.max(1e-9, this.loud * 10 ** (-db / 20)); }
 
   /** @param {number} tEnd time (s) of the newest sample pushed */
   step(tEnd) {
@@ -580,7 +594,8 @@ export class Pipeline {
     N = Math.min(N, ring.size);
     const frame = ring.latest(N, this.buf(full ? 'pfr' : 'pf', N));
     const { fLo, fHi } = this.band();
-    let r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi });
+    const quiet = this.quiet();
+    let r = detectPitch(frame, { fs, algo: p.algo, fLo, fHi, quiet });
     let second = false; // the reading comes from the second try below
     if (!r.valid && p.algo === 'yin' && p.clarity) {
       // Nothing in the short window. On many real engines one firing period does not repeat the last
@@ -592,12 +607,12 @@ export class Pipeline {
         const longS = Math.min(p.maxWinCycles, (p.cycles * cyl) / fNow);
         if (longS > winS) {
           const n = Math.min(Math.round(longS * this.fsDec), this.dec.size);
-          const again = detectPitch(this.dec.latest(n, this.buf('pfl', n)), { fs: this.fsDec, algo: p.algo, fLo, fHi, clarity: p.clarity });
+          const again = detectPitch(this.dec.latest(n, this.buf('pfl', n)), { fs: this.fsDec, algo: p.algo, fLo, fHi, clarity: p.clarity, quiet });
           if (again.valid) { r = again; N = n; fs = this.fsDec; second = true; }
         }
       } else if (!known) {
         // count being detected: the best period the short window has, if it is clear enough
-        const again = detectPitch(frame, { fs, algo: p.algo, fLo, fHi, clarity: p.clarity });
+        const again = detectPitch(frame, { fs, algo: p.algo, fLo, fHi, clarity: p.clarity, quiet });
         if (again.valid) r = again;
       }
     }

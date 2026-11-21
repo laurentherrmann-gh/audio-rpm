@@ -86,8 +86,10 @@ const OCTAVE_RATIO = 0.8;
  * @param {{fs:number, algo?:string, fLo:number, fHi:number, octaveCheck?:boolean}} opts
  * @returns {{f0:number, clarity:number, valid:boolean}}
  */
-export function detectPitch(frame, { fs, algo = 'mcleod', fLo, fHi, octaveCheck = true, clarity }) {
-  if (rms(frame) < 1e-4) return { f0: 0, clarity: 0, valid: false }; // silence
+export function detectPitch(frame, { fs, algo = 'mcleod', fLo, fHi, octaveCheck = true, clarity, quiet = 1e-4 }) {
+  // silence. `quiet` is an rms level; the pipeline gives one relative to the loudest sound it has heard,
+  // so that a quiet input (a low volume on the way in) is not taken for silence at idle
+  if (rms(frame) < quiet) return { f0: 0, clarity: 0, valid: false };
   let r = null;
   if (algo === 'hps') r = hps(frame, { fs, minFreq: fLo, maxFreq: fHi, harmonics: 5, threshold: MIN_CLARITY.hps });
   else if (algo === 'yin') r = clarity === undefined ? yin(frame, { fs }) : yinDip(frame, fs, 0.15, fs / (fHi * 1.2));
