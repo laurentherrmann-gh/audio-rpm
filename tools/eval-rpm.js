@@ -81,10 +81,12 @@ for (const { car, n, file } of todo) {
       const truth = at(t);
       if (truth === null || !keep(t)) return;
       scored++;
-      const near = around(t);
-      for (const k of KEYS) { const g = grade(r[k]?.rpm, truth, near); tally[k][g] = (tally[k][g] || 0) + 1; }
+      // each rpm against the reference at the moment it describes: the detectors' are carried to
+      // now, the combined one may be read a little back (cfg.look)
+      const tF = r.fused?.at ?? t, truthF = at(tF) ?? truth;
+      for (const k of KEYS) { const g = k === 'fused' ? grade(r.fused?.rpm, truthF, around(tF)) : grade(r[k]?.rpm, truth, around(t)); tally[k][g] = (tally[k][g] || 0) + 1; }
       const p = pace[moving(t) ? 'moving' : 'steady'];
-      p[0]++; if (grade(r.fused?.rpm, truth, []) === 'right') p[1]++;
+      p[0]++; if (grade(r.fused?.rpm, truthF, []) === 'right') p[1]++;
     }, 256, pipe => { if (map) pipe.tones = { [key]: [map].flat() }; });
     return { tally, pace, scored };
   };

@@ -21,6 +21,7 @@ const opt = (name, d) => { const i = argv.indexOf('--' + name); return i >= 0 ? 
 const dir = path.resolve(ROOT, opt('dir', 'samples/dr2'));
 const manifest = JSON.parse(readFileSync(path.resolve(ROOT, opt('manifest', 'samples/dr2-cars.json')), 'utf8'));
 const only = opt('only') ? new Set(opt('only').split(',').map(Number)) : null;
+const trial = opt('cfg') ? JSON.parse(opt('cfg')) : null; // pipeline settings to try (writes results-shifts-some.md)
 // the cars' tone maps, as the page has them once npm run learn-cars has run
 const profilesFile = path.join(dir, 'car-profiles.json');
 const learned = existsSync(profilesFile) ? loadProfiles(JSON.parse(readFileSync(profilesFile, 'utf8'))) : null;
@@ -109,7 +110,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const live = [];
     let last = null;
     const key = slug(car.car), maps = learned?.cars[key]?.tones;
-    replay(samples, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null) }, (t, r) => {
+    replay(samples, fs, { cylinders: car.cylinders, carKey: key, ...REVS, ...(car.scale ? { scale: { gyro: car.scale, pd: car.scale } } : null), ...trial }, (t, r) => {
       const e = r.gear?.last;
       if (e && e !== last) { last = e; live.push({ at: e.at, t: e.t, dir: e.dir, ratio: e.ratio }); }
     }, 256, pipe => { if (maps?.length) pipe.tones = { [key]: maps }; });
@@ -136,7 +137,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     '| # | car | cyl | clean shifts | found | missed | other live: real | false | not judged |', '|---|---|---|---|---|---|---|---|---|',
     ...rows.map(r => `| ${r.n} | ${r.car} | ${r.cylinders} | ${r.truth} | ${r.found.length} | ${r.missed.length} | ${r.alsoTrue} | ${r.falseOnes.length} | ${r.unjudged} |`),
   ];
-  const outFile = path.join(dir, `results-shifts${only ? '-some' : ''}.md`);
+  const outFile = path.join(dir, `results-shifts${only || trial ? '-some' : ''}.md`);
   writeFileSync(outFile, lines.join('\n') + '\n');
   console.log(`\n${lines[4]}\nWrote ${path.relative(ROOT, outFile)}`);
 }

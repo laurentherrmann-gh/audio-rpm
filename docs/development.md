@@ -30,7 +30,8 @@ public/detectors/            gyroball-core.js (ported, engine-tuned), pd-core.js
                              tones.js (a car's tone map: its engine orders' levels by rpm, to pick the firing tone),
                              shifts.js (gear shifts from the rpm's steps, counted gear)
 public/tracker.js            alpha-beta tracker (adapted from gyroball-rpm)
-public/fusion.js             one rpm from the two detectors (octave slips corrected)
+public/path.js               one rpm from the two detectors: the smoothest path through their readings
+public/fusion.js             the first way of combining them (rules), kept for comparison
 public/lag.js                measured-lag estimator
 public/ring.js               ring buffer
 public/engine-model.js       engine sound model + rpm schedule (simulator, WAV, bench)

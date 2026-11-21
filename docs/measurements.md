@@ -27,9 +27,14 @@ shifting sweep, adding one optimization at a time. 4 cylinders, 900–7,500 rpm:
 
 **combined** (both detectors, see [One RPM from two detectors](#one-rpm-from-two-detectors))
 
-| | lag | error mean / p90 (rpm) | glitches | process time per chunk |
+| | describes the moment | error mean / p90 (rpm) | glitches | process time per chunk |
 |---|---|---|---|---|
-| default | −2 ms | 32 / 44 | 0.0% | 0.43 ms |
+| the path, read 30 ms back (**default**) | 30 ms ago | **14 / 25** | 0.0% | 0.55 ms |
+| the path, read at now | 10 ms ago | 26 / 57 | 0.0% | 0.55 ms |
+| the first way (rules, reading by reading) | 2 ms ahead | 32 / 44 | 0.0% | 0.46 ms |
+
+The combined rpm is read a little back on purpose (see "The path" below): its error is measured
+against the true rpm of the moment it describes, and the first column says how late that moment is.
 
 That engine is cleaner than a real one: its cylinders sound alike. The benchmark also runs the same
 drive with cylinders that don't (the tones of the engine cycle at 0.3, as on most real cars; see
@@ -39,11 +44,12 @@ drive with cylinders that don't (the tones of the engine cycle at 0.3, as on mos
 |---|---|---|---|
 | pitch-detection | −26 ms | 132 / 162 | 3.1% |
 | gyroball | 0 ms | 174 / 330 | 3.1% |
-| **combined** | −26 ms | **82 / 141** | **1.1%** |
-| combined, without the second try and the firing-tone check | no match | 2,986 / 5,121 | 70% |
+| **combined** (the path, 28 ms back) | 28 ms | **25 / 56** | **0.0%** |
+| combined, without the second try and the firing-tone check | 46 ms | 269 / 456 | 6.8% |
 
-(The negative lag is the prediction running ahead on that engine; on the real clips the combined rpm
-is a median 60 ms behind.)
+(With the first way of combining, the rules, the combined rows were 82 / 141 rpm with 1.1% glitches,
+and 2,986 / 5,121 rpm with 70% glitches without the second try. The negative lag of
+pitch-detection is its prediction running ahead on that engine.)
 
 *lag* is measured, not computed: the delay that best aligns the output with the true RPM, using only
 moments when the revs are ramping. *Error* is at the same instant, lag included, which is what the
@@ -116,16 +122,16 @@ a 4- or 5-cylinder, a V12 at 7,000 can't be a 4, 5 or 6. Before a lock, the coun
 smallest one still possible.
 
 `npm run bench -- --auto`, simulated engines (time to lock, share of time locked to a wrong count,
-error of the combined rpm once locked):
+error of the combined rpm once locked, against the true rpm of the moment it describes, 30 ms back):
 
 | engine | mode | idle, then four pulls | rally: never idle |
 |---|---|---|---|
-| 4 cylinders | rally | 4 after 1.7 s · 0% · 30 rpm | 4 after 0.8 s · 0% · 37 rpm |
-| 5 cylinders | rally | 5 after 1.5 s · 0% · 27 rpm | 5 after 0.7 s · 0% · 32 rpm |
-| 6 cylinders | rally | 6 after 1.3 s · 0% · 25 rpm | 6 after 0.7 s · 0% · 30 rpm |
-| V8 | rally | 8 after 1.1 s · 0% · 23 rpm | 8 after 0.7 s · 0% · 29 rpm |
-| V10 | any | 10 after 1.2 s · 0% · 22 rpm | 10 after 0.7 s · 0% · 28 rpm |
-| V12 | any | 12 after 1.1 s · 0% · 21 rpm | 12 after 0.9 s · 0% · 29 rpm |
+| 4 cylinders | rally | 4 after 1.7 s · 0% · 12 rpm | 4 after 0.8 s · 0% · 11 rpm |
+| 5 cylinders | rally | 5 after 1.5 s · 0% · 10 rpm | 5 after 0.7 s · 0% · 10 rpm |
+| 6 cylinders | rally | 6 after 1.3 s · 0% · 10 rpm | 6 after 0.7 s · 0% · 11 rpm |
+| V8 | rally | 8 after 1.1 s · 0% · 10 rpm | 8 after 0.7 s · 0% · 12 rpm |
+| V10 | any | 10 after 1.2 s · 0% · 10 rpm | 10 after 0.7 s · 0% · 12 rpm |
+| V12 | any | 12 after 1.1 s · 0% · 8 rpm | 12 after 0.9 s · 0% · 11 rpm |
 | **V12** | **rally** | **no count** · wrong 13% of the time | **no count** · wrong 20% of the time |
 
 The last row is the price of the rally set: a V12 isn't in it, so its rpm can't come out right
@@ -178,6 +184,46 @@ With the combined rpm, the two clean upshifts in the clip are found (×0.72 and 
 shift; with pitch-detection alone one was missed and two were misread. What is left wrong is mostly
 revving in neutral on the limiter, where the readings also hop to three quarters of the revs, a ratio a
 real shift can have. One car and 24 seconds: these rules will be re-measured on the full set.
+
+### The path: looking back a little
+
+The rules decide reading by reading, and they put every reading at "now". Neither is right. A
+reading describes the middle of its analysis window: pitch-detection's is 10 to 65 ms old when it
+arrives, gyroball's 85 ms. And which reading to believe is easier to say with the readings around
+it in view, which is what the offline reference does. `public/path.js` does both, live, and is now
+what makes the combined rpm (`fusion.js` is kept: `combine: 'rules'` in the pipeline settings,
+for comparison):
+
+- every reading is filed under the moment it describes, so the two detectors' readings of the same
+  moment meet, however late each arrives;
+- on a grid of rpm values (48 per octave, one moment every 5 ms), a value costs nothing where a
+  detector reads it, a little where it is twice, four times or half a reading (the detector has
+  slipped to a neighbouring tone), and a fixed price where no reading is near. The two detectors'
+  costs add up, gyroball's counting 0.8;
+- from one moment to the next the rpm may move a little for little, or jump anywhere for a fixed
+  price;
+- the cheapest path through all of it is kept up to date (the Viterbi algorithm), and its last
+  0.11 s is worked out again at every step, since readings of those moments are still arriving.
+
+The combined rpm is that path, read **30 ms back** by default (the "Look-back" setting): by then
+pitch-detection has spoken of the moment and gyroball is about to. Read at "now", the path's end is
+carried on from the newest reading. The tach and SimHub show the value 30 ms later than they could;
+it is right more often, most of all while the revs move:
+
+| combined rpm, 80 real cars, tone maps on | right | while the revs are steady | while they move fast |
+|---|---|---|---|
+| the rules | 86% | 94% | 44% |
+| the path, read at now | 89% | 95% | 60% |
+| **the path, read 30 ms back (default)** | **92%** | **96%** | **72%** |
+
+70 of the 78 scored cars gain 2 points or more over the rules, one loses 2 (Ford Sierra Cosworth
+RS500, 85 → 83%, on 3 s of scored sound). It costs 0.09 ms per 5 ms chunk.
+
+On the hand-traced DS 21 clip above, the path is right 94% of the time, as the rules that were
+written from that clip. Getting there took two corrections that the 80 cars did not ask for but
+that clip did: a reading also stands for four times its value (pitch-detection on a quarter of the
+revs while gyroball reads them right, on the limiter), and a jump costs more than two moments of
+one detector reading something else (the path used to follow every stray reading during a shift).
 
 ## Is the rpm right? Every real car against a reference
 
@@ -269,13 +315,15 @@ of its clip, the detectors scored on the rest, without and with it:
 
 | combined rpm right | all | 4-cyl (68) | 5-cyl (1) | 6-cyl (8) | 8-cyl (3) | on a wrong tone |
 |---|---|---|---|---|---|---|
-| without the tone maps | 84% | 86% | 58% | 75% | 73% | 3% |
-| **with them** | **85%** | 86% | **69%** | **80%** | 74% | **1%** |
+| without the tone maps | 91% | 92% | 67% | 86% | 78% | 2% |
+| **with them** | **92%** | 93% | **76%** | **90%** | **85%** | **1%** |
 
-15 cars gain 2 points or more (Porsche 911 RGT 53 → 82%, Subaru Impreza 1995 66 → 84%, Audi quattro
-58 → 69%, Datsun 240Z 64 → 75%), 7 lose 2 to 4. Most cars were already right, so the average moves
-little; the weak ones move a lot. It is still one recording per car, learned and tested on two
-halves of it: your own driving, and another camera, are the real test.
+9 cars gain 2 points or more (Porsche 911 RGT 67 → 93%, Audi quattro 67 → 76%, Datsun 240Z
+80 → 88%, Ford Mustang GT4 80 → 88%, Subaru Impreza 1995 85 → 92%), 2 lose 2 or 3. Most cars were
+already right, so the average moves little; the weak ones move a lot. (Before the path, with the
+rules, the same test read 84% and 85%, with 15 cars gaining: the path now gets by itself part of
+what the maps corrected.) It is still one recording per car, learned and tested on two halves of
+it: your own driving, and another camera, are the real test.
 
 On the whole clips, with the maps learned from those same clips (flattering, but it is what the page
 does with these recordings):
@@ -284,42 +332,45 @@ does with these recordings):
 |---|---|---|---|---|---|
 | pitch-detection | 84% | 85% | 56% | 76% | 65% |
 | gyroball | 75% | 76% | 64% | 73% | 70% |
-| **combined** | **86%** | 87% | 69% | 81% | 70% |
-| combined, without the maps (`--tones off`) | 83% | 85% | 61% | 73% | 69% |
+| **combined** (the path, 30 ms back) | **92%** | 92% | 76% | 91% | 83% |
+| combined, without the maps (`--tones off`) | 91% | 92% | 69% | 83% | 71% |
+| combined the first way (the rules: `--cfg '{"combine":"rules"}'`) | 86% | 87% | 69% | 81% | 70% |
 
-66 of the 78 scored cars are at 80% or more; the median car is at 87%. (The first measurement of all,
-before any of this section and against the first version of the reference, was 69%.) With cylinder
+72 of the 78 scored cars are at 80% or more, 61 at 90% or more; the median car is at 93%. (The first
+measurement of all, before any of this section and against the first version of the reference, was
+69%.) With cylinder
 auto-detection instead of the car's count (`npm run eval-rpm -- --cylinders auto`) the combined rpm
-is right 72% of the time: until a count is locked the rpm is on the guess of four cylinders, and the
+is right 79% of the time: until a count is locked the rpm is on the guess of four cylinders, and the
 firing-tone check, the second try's long window and the tone map wait for a car or a count that is
 certain (letting a locked count switch them on gained nothing and cost 6 right counts): pick the car,
 or let it be recognised. The 8-cyl column is two cars (Ford Mustang GT4 and a few seconds of the
 Aston Martin; the Camaro has no scored moment).
 
-**What the remaining 14% is.** Each wrong moment is checked against the reference a little earlier
+**What the remaining 8% is.** Each wrong moment is checked against the reference a little earlier
 and later (`eval-rpm` reports it as "timing"):
 
-| share of the scored time | what |
-|---|---|
-| 86% | right |
-| 10% | right, but late or early: the value matches the reference of up to 0.15 s before or after |
-| under 1% | on another tone of the engine (½, ¼, ×2…) |
-| 3% | wrong otherwise |
+| share of the scored time | the rules | the path |
+|---|---|---|
+| right | 86% | 92% |
+| right, but late or early: the value matches the reference of up to 0.15 s before or after | 10% | 4% |
+| on another tone of the engine (½, ¼, ×2…) | under 1% | 1% |
+| wrong otherwise | 3% | 2% |
 
-The lag is the larger half of what is left. These clips are showcases with much revving in neutral:
-the revs move faster than 75% per second during 16% of the scored time, and there the combined rpm is
-right 44% of the time, against 94% when they are steady. Two tracker changes were measured for it and
-not kept: a shorter time constant (0.03 s: +1 point, but auto-detection loses 3 right counts) and
-carrying the rate of change through a re-acquire (+1 point, but the rpm overshoots and shift
-detection loses 12 points). One was kept: readings from the second try's long window are stamped
-earlier than those of the short window before them, and the tracker used to drop them or predict
-from the wrong moment; it now weighs each reading at its own time. The combined rpm runs a median 60 ms behind
-the reference (40 ms on the simulated stage, where a steady pull hides it: the tracker predicts
-through a steady slope, not through a blip or a shift). During fast changes pitch-detection often
-has no reading, and gyroball's 170 ms window reads the past.
+Lag was the larger half of what the rules left, and it is what the path took back. These clips are
+showcases with much revving in neutral: the revs move faster than 75% per second during 16% of the
+scored time. There the rules were right 44% of the time, the path is 72% (and 96% against 94% when
+they are steady). The rules ran a median 60 ms behind the reference: each tracker smooths, predicts
+through a steady slope but not through a blip or a shift, and gyroball's 170 ms window reads the
+past. Three tracker changes were measured for it before the path. Two were not kept: a shorter time
+constant (0.03 s: +1 point, but auto-detection loses 3 right counts) and carrying the rate of change
+through a re-acquire (+1 point, but the rpm overshoots and shift detection loses 12 points). One
+was: readings from the second try's long window are stamped earlier than those of the short window
+before them, and the tracker used to drop them or predict from the wrong moment; it now weighs each
+reading at its own time. The path goes further the same way: it takes the raw readings, each at its
+own time, and does not smooth.
 
-**Is it worth running both detectors?** Yes, measured on the same moments (before the tone maps and
-the corrected reference, which lift every row by a few points):
+**Is it worth running both detectors?** Yes. Measured with the rules, on the same moments (before
+the tone maps and the corrected reference, which lift every row by a few points):
 
 | | right |
 |---|---|
@@ -335,16 +386,21 @@ up; averaging is worse than pitch-detection alone, because when they disagree on
 wrong tone and the average is on none. Per car, the combined rpm beats the better detector by more
 than a point on 32 of 77 cars and loses by more than a point on 4. When both are right, gyroball's
 value is the less exact (median error 0.8% against 0.45%), so there is nothing to gain from mixing
-values either. What is left to win is in the 17% where neither is right, most of it fast rev changes:
-that needs a detector that follows them, not a better mix.
+values either. The conclusion drawn then was that what is left to win is in the 17% where neither
+is right, and that it needs a detector that follows fast rev changes, not a better mix. That was half
+right. Choosing between the two trackers' values of the same instant was used up; but each of those
+values is late by a different time, and a reading that is "wrong" now was often right for the moment
+it describes. The path, which puts each raw reading at its own moment and may take twice or four
+times a reading, is right 92% of the time, above that ceiling (which stands at 87% today, with the
+tone maps and the corrected reference, and the rules at 86%), and
+it beats the better detector by more than a point on 72 of 78 cars.
 
 What is still wrong:
 
 - A car with a saved calibration keeps it: if you calibrated one of the three V6s before `"scale": 2`
   existed, press "Reset scales" on it once.
-- Aston Martin V8 Vantage GT4 (21%, 2 s scored), Volkswagen Golf GTI 16v (57%), Lancia 037 (65%),
-  Subaru WRX STI RX (68%), Audi quattro (69%), MG Metro 6R4 (69%), Datsun 240Z (72%): mostly lag now,
-  not wrong tones.
+- Aston Martin V8 Vantage GT4 (54%, 2 s scored), Volkswagen Golf GTI 16v (71%), Lancia 037 (73%,
+  on twice the revs 18% of the time), Audi quattro S1 E2 (76%), Subaru WRX STI RX (78%).
 - Peugeot 206 Rally (39%, "twice the revs" half of the time): its loudest tone is the second
   harmonic of the firing tone, and the reference is sure of only 7 s of it, too little for a map that
   overrules the detectors.
@@ -356,6 +412,8 @@ npm run eval-rpm -- --only 13,25
 npm run eval-rpm -- --cylinders auto
 npm run eval-rpm -- --tones split
 npm run eval-rpm -- --tones off
+npm run eval-rpm -- --cfg '{"look":0}'
+npm run eval-rpm -- --cfg '{"combine":"rules"}'
 ```
 
 It writes `samples/dr2/results-rpm.md` (per car: share of the clip scored, the loudest tone the
@@ -366,11 +424,14 @@ reference found, share right for each rpm, most common error).
 In gear, the revs follow the car's speed: over a third of a second they are a straight line (in log
 rpm). A shift is a break between two such lines: the revs drop (upshift) or jump (downshift) by a
 gearbox ratio. `public/detectors/shifts.js` fits a line to the combined rpm over 0.3 s before a gap
-of 0.18 s and one over 0.2 s after it, carries both to the middle of the gap, and reports a shift when
+of 0.28 s and one over 0.2 s after it, finds where in the gap the revs step (the largest change
+within 0.1 s, or a hole in the readings), carries both lines to that place, and reports a shift when
 they differ by 11% to ×1.93. Both lines must fit (2.5% rms), neither may be steeper than 1.2 per
 second (a rev blip is), the difference in their slopes may explain half the step at most (a lift
-followed by throttle is a V, not a step), and revs falling on both sides of a drop are a lift. A
-change of exactly ×2 or ÷2 is a detector slipping an octave, not a shift.
+followed by throttle is a V, not a step), revs falling on both sides of a drop are a lift, and half
+of the step must happen within that 0.1 s: a shift is quick, revs that swing slowly from one line to
+the other are not one. A change of exactly ×2 or ÷2 is a detector slipping an octave, not a shift.
+The detector reads the path 50 ms back (`shiftLook`), where it is surer than at the 30 ms of the tach.
 
 The rpm doesn't say which gear, so the gear is **counted**: 1st whenever the car has been standing
 (steady revs below 1.6 × the idle setting for a second), then +1 or −1 per shift, kept within 1 and
@@ -384,10 +445,10 @@ drops of ×0.69 to ×0.83):
 
 | engine | shifts found | false | delay, median / max | ratio error (median) | gear right |
 |---|---|---|---|---|---|
-| 4 cyl | 36 of 36 | 0 | 280 / 315 ms | 2.8% | 100% |
-| 5 cyl | 36 of 36 | 0 | 273 / 309 ms | 2.3% | 100% |
-| 6 cyl | 36 of 36 | 0 | 273 / 309 ms | 1.6% | 100% |
-| 8 cyl | 36 of 36 | 0 | 273 / 309 ms | 3.1% | 100% |
+| 4 cyl | 36 of 36 | 0 | 311 / 320 ms | 3.0% | 100% |
+| 5 cyl | 36 of 36 | 0 | 307 / 320 ms | 3.1% | 100% |
+| 6 cyl | 36 of 36 | 0 | 311 / 320 ms | 2.8% | 100% |
+| 8 cyl | 36 of 36 | 0 | 311 / 320 ms | 3.0% | 100% |
 
 **On the 80 real cars** (`npm run eval-shifts`). The clips have no gear truth, so the shifts are
 read from the offline reference rpm with the same idea, strictly: a break of 10% or more between two
@@ -397,27 +458,37 @@ moment: real (the reference steps there too, just not cleanly enough to be liste
 not), or not judged (the reference is unsure there: idle, revving in neutral, the first second of a
 launch).
 
-| | first detector (a fast, short change of the rpm) | now (break between two lines) |
-|---|---|---|
-| clean shifts found | 243 of 313 (78%) | **300 of 363 (83%)** |
-| live shifts judged false | 214 of 644 (33%) | **46 of 445 (10%)** |
-| live shifts not judged | 1,584 (20 per clip) | 527 (7 per clip) |
-| reported after the shift | 225 ms | 314 ms |
-| ratio off by (median) | 6.4% | 5.0% |
+| | first detector (a fast, short change of the rpm) | break between two lines, on the rules' rpm | **now**: the same on the path, longer gap, quick step |
+|---|---|---|---|
+| clean shifts found | 243 of 313 (78%) | 300 of 363 (83%) | **306 of 363 (84%)** |
+| live shifts judged false | 214 of 644 (33%) | 46 of 445 (10%) | **29 of 424 (7%)** |
+| live shifts not judged | 1,584 (20 per clip) | 527 (7 per clip) | 492 (6 per clip) |
+| reported after the shift | 225 ms | 314 ms | 364 ms |
+| ratio off by (median) | 6.4% | 5.0% | **3.3%** |
 
 (The first column was measured before the reference was corrected and the tone maps added, which is
-why it has fewer clean shifts to find.) The first detector was tuned on the simulator, where the rpm is smooth; on real sound the rpm has
-glitches and holes that look just like its "fast, short change". The price of the line fit is
-0.09 s: a shift is reported 0.32 s after it instead of 0.23 s (0.28 s instead of 0.19 s on the
-simulator, where the ratio is also measured to 2–3% instead of 1%).
+why it has fewer clean shifts to find.) The first detector was tuned on the simulator, where the rpm
+is smooth; on real sound the rpm has glitches and holes that look just like its "fast, short
+change". The line fit cost 0.09 s, and reading the path 50 ms back another 0.05 s: a shift is
+reported 0.36 s after it (0.31 s on the simulator).
+
+Moving to the path did not help the shifts by itself: with the detector as it was, 287 of 363 were
+found (79%), fewer than on the rules' rpm. The readings around a real shift are a mess for longer
+than the shift lasts, and the path follows them where the trackers smoothed over them. A longer gap
+between the two lines (0.28 s instead of 0.18 s) leaves that mess out: 79% → 86% found. A shift is
+reported as soon as both lines fit, so the longer gap does not delay it; but two lines 0.28 s apart
+also fit around revs that only swing from one level to another (a lift from a steady pull, a wobble
+on the throttle), which the simulator showed at once. Hence the quick-step rule, which costs 2
+points of shifts found and removes a third of the false ones; placing the shift where the step is,
+not in the middle of the gap, is what brought the ratio error from 5% to 3%.
 
 What this means for the gear on the tach: on a real stage it is right after a standstill and for the
-next few shifts, then drifts: one shift in five is missed, one reported shift in ten is false, and
-revving in neutral still gives a few. All clean shifts are found on 43 of the 73 cars that have any;
-the worst are the Porsche 911 RGT, Ford Mustang GT4 and Audi quattro (1 found of 6 to 8), where the
-rpm itself is weak. A count cannot correct itself. The way to a gear that can is each gear pair's
-own ratio (×0.69 for 1→2, ×0.83 for 4→5 in the simulation): at 5% the ratios are not yet measured
-well enough for it, and it is not built.
+next few shifts, then drifts: one shift in six is missed, one reported shift in fourteen is false,
+and revving in neutral still gives a few. All clean shifts are found on 36 of the 74 cars that have
+any; the worst are the Audi quattro S1 E2 (3 of 6), the Ford Mustang GT4 and the Fiesta Rallycross
+Mk7 (4 of 7). A count cannot correct itself. The way to a gear that can is each gear pair's own
+ratio (×0.69 for 1→2, ×0.83 for 4→5 in the simulation): at 3% the ratios are getting measured well
+enough to try it; it is not built.
 
 ## Car recognition
 

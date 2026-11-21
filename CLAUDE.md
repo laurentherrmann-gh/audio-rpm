@@ -39,14 +39,19 @@
   offline reference (`tools/lib/reference.js`). Re-run it after touching `firingTone`, the detectors
   or the fusion, and update the table in `docs/measurements.md` ("Is the rpm right?"). A change that helps one car
   can cost another: compare the per-car table in `samples/dr2/results-rpm.md` before and after.
-- `public/fusion.js` makes the combined rpm (tach, SimHub and shift detection use it). Its rules come
-  from real clips (DS 21, then all 80 cars with `npm run eval-rpm`); re-measure on real clips before
-  changing them, not on the simulator. The simulator's default engine is too clean to show what real
+- `public/path.js` makes the combined rpm (tach, SimHub and shift detection use it): the cheapest
+  path through both detectors' raw readings, each filed under the moment it describes, read
+  `look` (30 ms) back; shifts read it `shiftLook` (50 ms) back. `public/fusion.js` is the first way
+  (rules), kept as `combine: 'rules'` for comparison. The path's costs (`PATH`) were set on all 80 cars
+  (`npm run eval-rpm`, also `-- --cfg '{"look":0}'`) and on the hand-traced DS 21 clip, where the
+  rules were written: most settings read the same on the 80 cars and differ on that clip (rev limiter),
+  so check both. Re-measure on real clips before changing them, not on the simulator. The simulator's default engine is too clean to show what real
   cars do: `synthesize(..., { cycleLevel: 0.3 })` gives cylinders that don't sound alike.
 - Shift and gear detection is `public/detectors/shifts.js` (thresholds in `SHIFT`), fed by
   the combined rpm in the pipeline. `npm run bench -- --shifts` measures it on the simulator,
   `npm run eval-shifts` on the real clips (shifts read from the reference rpm). Tune it on the real
-  clips: the simulator's rpm is too smooth to show false shifts. Anything that makes the combined rpm
-  jumpier (tracker settings) costs shifts: re-run eval-shifts after touching the tracker or fusion.
+  clips: the simulator's rpm is too smooth to show false shifts; but keep its tests, they caught a
+  longer gap taking a lift for a shift. Anything that changes the combined rpm changes the shifts:
+  re-run eval-shifts after touching the path, its look-backs or the detectors.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

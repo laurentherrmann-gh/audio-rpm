@@ -18,13 +18,18 @@
 export const SHIFT = Object.freeze({
   before: 0.3,     // s of revs before the shift that a line is fitted to
   gapBefore: 0.03, // s left out just before it
-  gap: 0.18,       // s left out for the shift itself (its own time, and the detector catching up)
+  gap: 0.28,       // s left out for the shift itself: its own time, and the readings around it, which
+                   //   are a mess on real sound for longer than the shift lasts. A shift is reported
+                   //   as soon as the two lines fit, so a longer gap does not make the report later; it
+                   //   makes the place less exact. (Real cars: 0.18 found 79%, 0.28 86%, 0.34 more false ones.)
   after: 0.2,      // s of revs after it that a line is fitted to: the report comes gap + after later
   fit: 0.025,      // log rpm: the revs may stray this far (rms) from each line…
   slope: 1.2,      // per s (log rpm): …and each line may be this steep, no steeper (in gear, not a blip)
   lift: 0.4,       // per s: revs falling faster than this on both sides of a drop: a lift, not an upshift
   kink: 0.5,       // share of the step that the two lines' difference in slope may account for
                    //   (a lift followed by throttle is a V, not a step)
+  quick: 0.1,      // s within which…
+  quickShare: 0.5, // …this share of the step must happen, somewhere in the gap (or the readings have a hole there)
   minChange: 0.12, // log rpm: a shift changes the revs by at least 11%…
   maxChange: 0.66, // …and at most ×1.93 (÷1.93)
   octave: 0.04,    // changes within 4% of ×2 or ÷2 are the pitch detector slipping an octave
@@ -47,7 +52,8 @@ export class ShiftDetector {
     this.clear();
   }
 
-  set({ idle, redline, maxGear } = {}) {
+  set({ idle, redline, maxGear, thresholds } = {}) {
+    if (thresholds) this.p = { ...SHIFT, ...thresholds };
     if (idle) this.idle = idle;
     if (redline) this.redline = redline;
     if (maxGear) this.maxGear = maxGear;
@@ -92,19 +98,35 @@ export class ShiftDetector {
     if (mid < this.lastAt + p.apart) return null;
     const b = this.line(from - p.gapBefore - p.before, from - p.gapBefore, mid), a = b && this.line(t - p.after, t, mid);
     if (!a) return null;
-    const step = a.y - b.y, size = Math.abs(step);
+    // Where in the gap do the revs step? A shift is quick: most of the change happens within `quick`
+    // s, or the readings have a hole there. Revs that swing slowly from one line to the other (a
+    // wobble on the throttle, a lift) are not a shift, however well two lines fit around them.
+    const down = a.y < b.y ? -1 : 1, lo = from - p.gapBefore, hi = t - p.after;
+    let at = mid, most = 0, hole = 0, holeAt = mid, i = h.length - 1;
+    while (i > 0 && h[i - 1].t >= lo) i--;
+    for (; i < h.length && h[i].t <= hi; i++) {
+      if (i + 1 < h.length && h[i + 1].t - h[i].t > hole) { hole = h[i + 1].t - h[i].t; holeAt = (h[i + 1].t + h[i].t) / 2; }
+      for (let j = i + 1; j < h.length && h[j].t <= hi && h[j].t - h[i].t <= p.quick; j++) {
+        const d = down * (h[j].x - h[i].x);
+        if (d > most) { most = d; at = (h[i].t + h[j].t) / 2; }
+      }
+    }
+    if (hole > p.hole && most < p.quickShare * Math.abs(a.y - b.y)) at = holeAt;
+    // both lines carried to that place
+    const step = a.y - b.y + (a.slope - b.slope) * (at - mid), size = Math.abs(step);
     if (size < p.minChange || size > p.maxChange || Math.abs(size - Math.LN2) < p.octave) return null;
+    if (hole <= p.hole && most < p.quickShare * size) return null;
     if (Math.max(a.fit, b.fit) > p.fit || Math.max(Math.abs(a.slope), Math.abs(b.slope)) > p.slope) return null;
     if (Math.abs(a.slope - b.slope) * (p.gapBefore + p.gap + (p.before + p.after) / 2) / 2 > p.kink * size) return null;
     // the revs falling on both sides of a drop is a lift (off the throttle: fast at first, then
     // slower), not an upshift: after an upshift the car pulls again or at least holds
     if (step < 0 && b.slope < -p.lift && a.slope < -p.lift) return null;
 
-    this.lastAt = mid;
+    this.lastAt = at;
     const dir = step < 0 ? 'up' : 'down'; // revs drop = gear up
     if (this.gear !== null) this.gear = Math.max(1, Math.min(this.maxGear, this.gear + (dir === 'up' ? 1 : -1)));
     this.count++;
-    this.last = { t, at: mid, dir, ratio: Math.exp(step), gear: this.gear };
+    this.last = { t, at, dir, ratio: Math.exp(step), gear: this.gear };
     return this.last;
   }
 

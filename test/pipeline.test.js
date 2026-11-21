@@ -50,12 +50,12 @@ test('an engine whose cylinders do not sound alike: the short pitch window finds
       n++;
       const truth = rpmAt(schedule, t);
       if (r.pd.raw) { has++; if (Math.abs(r.pd.raw / truth - 1) < 0.06) right++; }
-      if (r.fused?.rpm && Math.abs(r.fused.rpm / truth - 1) < 0.06) fused++;
+      if (r.fused?.rpm && Math.abs(r.fused.rpm / rpmAt(schedule, r.fused.at) - 1) < 0.06) fused++; // at: the moment it describes
     });
     return { has: has / n, right: right / n, fused: fused / n };
   };
   const before = score({ ...DEFAULTS.pd, clarity: 0 }), now = score(DEFAULTS.pd);
   assert.ok(before.has < 0.4, `short window alone: a reading ${Math.round(100 * before.has)}% of the time`);
   assert.ok(now.right > 0.9, `with the second try: right ${Math.round(100 * now.right)}% of the time`);
-  assert.ok(now.fused >= before.fused, `combined rpm right ${Math.round(100 * before.fused)}% → ${Math.round(100 * now.fused)}%`);
+  assert.ok(now.fused > 0.88, `combined rpm right ${Math.round(100 * now.fused)}% of the time`);
 });

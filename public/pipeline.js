@@ -32,6 +32,7 @@ import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.j
 import { TONES, orderLevels, toneDistance } from './detectors/tones.js';
 import { ShiftDetector } from './detectors/shifts.js';
 import { Fusion } from './fusion.js';
+import { PathTracker } from './path.js';
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -68,6 +69,13 @@ export const DEFAULTS = Object.freeze({
   // could be its second harmonic; on sixes the tone an octave below the firing tone is strong by
   // nature, so none is asked). firingSwitch: s a correction must last when the pitch as found
   // continues this detector's own track (then a louder multiple is more likely a harmonic).
+  // combine: how the one rpm is made: 'path' (path.js: the smoothest path through both detectors'
+  // readings) or 'rules' (fusion.js, the first way). look: s the combined rpm is read back from now
+  // on that path: 0 = the best guess for this instant; a little later both detectors have spoken of
+  // the moment and it is right more often (real cars: 89% at 0, 92% at 30 ms). shiftLook: the same
+  // for the shift detector. gyroWeight: what gyroball's word counts for on the path, against 1 for
+  // pitch-detection's.
+  combine: 'path', look: 0.03, shiftLook: 0.05, gyroWeight: 0.8,
   tones: true, carKey: null, lockedIsKnown: false, firingMargin: 3, firingClear: 5, firingOver: 3, firingSwitch: 0.5, firingConfirm: 0.06, firingGap: 0.08, firingKeep: 2, firingNear: 0.25, autoCandidates: RALLY_CYLINDERS, rpmMin: 400, rpmMax: 10500, idle: 900, redline: 7500,
   scale: { gyro: 1, pd: 1 },
   // every: s between gyroball analyses. Its window is 171 ms: analysing it on every 5 ms chunk gave
@@ -114,6 +122,7 @@ export class Pipeline {
     this.trackers = { gyro: new Tracker(), pd: new Tracker() };
     this.shifts = new ShiftDetector();
     this.fusion = new Fusion();
+    this.path = new PathTracker();
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -128,7 +137,8 @@ export class Pipeline {
       tr.set({ tau: t.tau, maxAccel: t.accel, maxVel: t.accel, reacquire: t.reacq, lag: 0.01, carry: t.carry });
     }
     const c = this.cfg;
-    this.shifts.set({ idle: c.idle, redline: c.redline, maxGear: c.maxGear });
+    this.shifts.set({ idle: c.idle, redline: c.redline, maxGear: c.maxGear, thresholds: c.shiftRule });
+    this.path.set(c.pathRule);
     if (prev.cylinders !== c.cylinders || String(prev.autoCandidates) !== String(c.autoCandidates)) this.cyl = this.freshCyl();
     if (prev.car !== c.car) this.forgetCar();
     if (prev.cylinders !== c.cylinders || prev.scale.gyro !== c.scale.gyro || prev.scale.pd !== c.scale.pd) this.reset();
@@ -136,7 +146,7 @@ export class Pipeline {
 
   /** The rpm scale changed: restart the trackers, and don't take the jump for a gear shift. */
   reset() {
-    this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.shifts.clear();
+    this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.path.reset(); this.shifts.clear();
     this.gyroLast = null; this.gyroSpec = null; this.firing = {};
     this.scale = (this.scale || 0) + 1; // readings taken before and after are not comparable
   }
@@ -348,8 +358,29 @@ export class Pipeline {
     const pd = this.cfg.pd.enabled ? this.stepPd(tEnd) : null;
     // if the rpm scale changed during this step (a cylinder count was just found), the two
     // readings are on different scales: nothing to combine this time
-    const fused = this.scale === scale ? this.fusion.step(tEnd, pd, gyro) : { rpm: null, source: '', coast: false };
-    this.shifts.push(tEnd, fused.coast ? null : fused.rpm);
+    if (this.cfg.combine !== 'path') { // the first way: rules, reading by reading (fusion.js)
+      const fused = this.scale === scale ? this.fusion.step(tEnd, pd, gyro) : { rpm: null, source: '', coast: false };
+      this.shifts.push(tEnd, fused.coast ? null : fused.rpm);
+      return { gyro, pd, fused, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
+    }
+    // One rpm: the smoothest path through the readings (path.js). Each raw reading is filed under the
+    // moment it describes (the middle of its window); gyroball's only when it is a new one, and
+    // counting a little less: where the two disagree by anything but an octave, pitch-detection is
+    // the one more often right (84% against 75% of the time on the real cars).
+    if (this.scale === scale) {
+      const made = [];
+      if (pd?.raw > 0) made.push({ rpm: pd.raw, age: pd.windowDelayMs / 1000, key: 'pitch' });
+      if (gyro?.raw > 0 && this.gyroLast?.t === tEnd) made.push({ rpm: gyro.raw, age: gyro.windowDelayMs / 1000, key: 'gyroball', lasts: this.cfg.gyro.every, weight: this.cfg.gyroWeight });
+      this.path.push(tEnd, made);
+    }
+    const look = Math.max(0, Math.min(0.1, this.cfg.look)), now = this.scale === scale ? this.path.read(look) : null;
+    // at: the moment the value describes (cfg.look back from now)
+    const fused = now ? { rpm: now.rpm, source: now.source, coast: now.held && look > 0, at: tEnd - look } : { rpm: null, source: '', coast: false, at: tEnd - look };
+    // shifts are found on the path a little further back, where it is surer (they are reported
+    // a third of a second after the fact anyway)
+    const then = this.scale === scale ? this.path.read(this.cfg.shiftLook) : null;
+    const shift = this.shifts.push(tEnd - this.cfg.shiftLook, then && !then.held ? then.rpm : null);
+    if (shift) shift.t = tEnd; // reported now
     return { gyro, pd, fused, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
   }
 

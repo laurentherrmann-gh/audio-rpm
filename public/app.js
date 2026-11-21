@@ -13,7 +13,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('ab3.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('ab3.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
-const SETTING_IDS = ['cylinders', 'simdrive', 'idle', 'redline', 'maxgear', 'hop', 'predict', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
+const SETTING_IDS = ['cylinders', 'simdrive', 'idle', 'redline', 'maxgear', 'hop', 'predict', 'look', 'fft', 'gvariant', 'gmode', 'algo', 'pdmax', 'adaptive', 'tau', 'accel', 'reacq', 'actual'];
 const isBox = id => $(id).type === 'checkbox';
 const val = id => (isBox(id) ? $(id).checked : $(id).value);
 for (const id of SETTING_IDS) {
@@ -45,6 +45,7 @@ function readSettings() {
     algo: $('algo').value,
     pdmax: Number($('pdmax').value) || 0.085,
     adaptive: $('adaptive').checked,
+    look: num('look', 0, 100, 30),
     tau: num('tau', 0, 2, 0.05),
     accel: num('accel', 1000, 200000, 40000),
     reacq: num('reacq', 0.05, 2, 0.25),
@@ -61,7 +62,7 @@ const pipelineCfg = () => ({
   cylinders: S.cylinders, car: $('car').value === 'auto' ? 'auto' : 'off', carKey: carNow()?.key ?? null, autoCandidates: S.autoCandidates, idle: S.idle, redline: S.redline, maxGear: S.maxGear, scale: { ...scales }, predict: S.predict,
   gyro: { enabled: true, fft: S.fft, tuned: S.gtuned, mode: S.gmode },
   pd: { enabled: true, algo: S.algo, maxWin: S.pdmax, adaptive: S.adaptive },
-  tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq },
+  tracker: { tau: S.tau, accel: S.accel, reacq: S.reacq }, look: S.look / 1000,
 });
 
 // ---------- state ----------
@@ -689,7 +690,7 @@ function drawCards() {
   const fu = last.fused, fe = $('fused-rpm');
   fe.textContent = fu?.rpm != null ? Math.round(fu.rpm).toLocaleString() : '—';
   fe.classList.toggle('off', fu?.rpm == null);
-  $('fused-sub').textContent = !fu ? '' : fu.rpm == null ? 'no reading' : fu.coast ? 'holding' : `from ${fu.source}`;
+  $('fused-sub').textContent = !fu ? '' : fu.rpm == null ? 'no reading' : fu.coast ? 'holding' : fu.source === 'path' || fu.source === 'held' ? 'between readings' : `from ${fu.source}`;
   if ($('cyl-state').textContent !== cylText().long) { $('cyl-state').textContent = cylText().long; $('cyl-state').title = `Cylinder count in use: ${cylText().long}`; }
   $('rec').textContent = recSince ? `■ Stop ${Math.floor((performance.now() - recSince) / 1000)} s` : '● Rec';
   $('rec').style.color = recSince ? 'var(--bad)' : '';

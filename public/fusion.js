@@ -1,4 +1,6 @@
-// One RPM from the two detectors.
+// One RPM from the two detectors: the first way, by rules, reading by reading. The pipeline now uses
+// path.js (92% right on the real cars against 86% for these rules); this is kept for comparison
+// (`combine: 'rules'`), and because its rules say what was learned about how the detectors fail.
 //
 // Real game sound (the first clean DiRT Rally 2.0 clip) showed how they fail: never at random, but
 // by reading a half or a quarter of the true revs, when the engine's slower rhythms (crank and

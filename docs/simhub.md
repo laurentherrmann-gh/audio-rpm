@@ -27,6 +27,10 @@ go from the detection worker straight to the server, and from there to SimHub as
 The page's main thread is not in that path (Chrome slows it down when the tab is hidden), and there is
 no waiting for a 60 Hz tick (which cost 8 ms on average).
 
+The combined rpm describes the moment 30 ms ago: it is read that far back on the path through the
+detectors' readings, where it is right more often (92% of the time on the real cars, against 89%
+for the newest value). **Look-back** in the page's settings sets it; 0 sends the newest value.
+
 On the Windows PC: select **DiRT Rally 2.0** in SimHub (it may say telemetry is "not configured",
 because it can't find the game's config file there; that doesn't matter), allow inbound UDP 20777 in
 Windows Firewall, then open any dashboard with a rev counter. The page sends redline and idle too,

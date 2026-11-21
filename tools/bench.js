@@ -71,7 +71,7 @@ if ('auto' in args) {
         if (r.cyl.locked !== null && lockedAt === null) lockedAt = t;
         if (r.cyl.locked !== null && r.cyl.locked !== cyl) wrong++;
         if (lockedAt === null) return;
-        for (const k of ['pd', 'gyro', 'fused']) if (r[k].rpm != null) err[k].push(Math.abs(r[k].rpm - rpmAt(schedule, t)));
+        for (const k of ['pd', 'gyro', 'fused']) if (r[k].rpm != null) err[k].push(Math.abs(r[k].rpm - rpmAt(schedule, k === 'fused' ? r.fused.at ?? t : t))); // the combined rpm describes a moment a little back
       }, hop);
       const m = a => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : '—');
       rows[`${cyl} cyl, auto ${setName}`] = {
@@ -94,14 +94,14 @@ function run(hop, cfg, sound = signal) {
   replay(sound, fs, { cylinders, idle, redline, ...cfg }, (t, r) => {
     for (const k of ['gyro', 'pd', 'fused']) {
       if (!r[k]) continue;
-      pts[k].push({ t, y: r[k].rpm });
+      pts[k].push({ t, at: r[k].at ?? t, y: r[k].rpm }); // at: the moment the value describes (the combined rpm is read cfg.look back)
       comp[k].push(k === 'fused' ? r.pd.computeMs + r.gyro.computeMs : r[k].computeMs);
     }
   }, hop);
   const out = {};
   for (const k of ['gyro', 'pd', 'fused']) {
     if (!pts[k].length) continue;
-    const errs = pts[k].filter(p => p.y != null && p.t > 1).map(p => Math.abs(p.y - truth(p.t))).sort((a, b) => a - b);
+    const errs = pts[k].filter(p => p.y != null && p.t > 1).map(p => Math.abs(p.y - truth(p.at))).sort((a, b) => a - b);
     const lag = estimateLag(pts[k].filter(p => p.t > 1), truth);
     const c = comp[k].slice(50).sort((a, b) => a - b);
     out[k] = {
@@ -135,8 +135,12 @@ for (const k of ['pd', 'gyro']) {
   }
   console.table(rows);
 }
-console.log('combined (both detectors, default settings; compute = both detectors, per chunk)');
-console.table({ 'combined': run(256, {}).fused });
+console.log('combined (both detectors; error against the true rpm of the moment the value describes; lag = how late that is; compute = both detectors, per chunk)');
+console.table({
+  'combined: the path, read 30 ms back (default)': run(256, {}).fused,
+  'combined: the path, read at now': run(256, { look: 0 }).fused,
+  'combined: the first way (rules)': run(256, { combine: 'rules' }).fused,
+});
 
 // The engine above is cleaner than a real one: its cylinders sound alike. Most real cars' don't (the
 // tones of the engine cycle are strong), which is what the first versions could not read.

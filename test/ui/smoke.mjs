@@ -51,6 +51,7 @@ try {
   check('page fits one screen before starting', await pageHeight() <= 900, `${await pageHeight()} px`);
   const version = await (await p.request.get(`http://127.0.0.1:${httpPort}/version.json`)).json(), shown = await p.textContent('#version');
   check('the version is shown next to the title', version.build ? shown === `build ${version.build}` : shown === `v${version.version}`, `"${shown}" for ${JSON.stringify(version)}`);
+  check('the look-back of the combined rpm is a setting, 30 ms by default', (await p.inputValue('#look')) === '30');
   check('…with commit and date in its tooltip', !version.commit || (await p.getAttribute('#version', 'title')).includes(version.commit));
 
   // the state texts of the top bar have a fixed place: a long list of possible cars moves nothing
