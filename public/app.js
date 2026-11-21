@@ -433,12 +433,31 @@ function connect() {
   ws.onmessage = e => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.type !== 'status') return;
+    showVersion(m);
     udpOn = m.udp;
     $('udp').checked = m.udp;
     $('udp-state').textContent = m.udp ? `→ ${m.target} · ${m.packetsPerSec} pkt/s` : '· UDP paused';
     $('udp-err').textContent = m.error ? ' · UDP error: ' + m.error : '';
   };
 }
+
+// ---------- version ----------
+// The page shows which build it was loaded from; if the server has since been restarted on another
+// one (a git pull), it says so: the page in the tab is then older than the server.
+let loadedVersion = null;
+const when = iso => (iso ? new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+function showVersion(server) {
+  const el = $('version'), v = loadedVersion;
+  if (!v) return;
+  const stale = server && server.commit && v.commit && server.commit !== v.commit;
+  const text = stale ? `build ${v.build} · reload: server is build ${server.build}` : v.build ? `build ${v.build}` : `v${v.version}`;
+  if (el.textContent === text) return;
+  el.textContent = text;
+  el.style.color = stale ? 'var(--warn)' : '';
+  el.title = `audio-rpm v${v.version}` + (v.commit ? ` · build ${v.build} · commit ${v.commit}${v.modified ? ' + local changes' : ''} · ${when(v.date)}` : ' (not a git checkout)')
+    + (stale ? `\nThe server now runs build ${server.build} (${server.commit}): reload this page.` : '\nAfter git pull: restart npm start, then reload this page.');
+}
+fetch('/version.json').then(r => r.json()).then(v => { loadedVersion = v; showVersion(null); }).catch(() => {});
 
 // ---------- drawing ----------
 function setupCanvas(c) {

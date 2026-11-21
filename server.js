@@ -4,7 +4,8 @@
 //  - sends it to SimHub as DiRT Rally 2.0 UDP telemetry at SEND_HZ, when UDP output is on
 //    (off by default: SIMHUB_UDP=on to start with it on, or use the toggle in the page)
 import http from 'node:http';
-import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createSocket } from 'node:dgram';
 import path from 'node:path';
@@ -14,6 +15,23 @@ import { buildDr2Packet } from './src/dr2-packet.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = Number(process.env.HTTP_PORT || 8777);
+
+/**
+ * Which version this is, for the page to show: package version, and from git the build number
+ * (commits so far: it only goes up), the commit and its date. `modified` = files changed since that
+ * commit. Read once at start: after a git pull, restart the server.
+ */
+function versionInfo() {
+  const git = (...args) => { try { return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+  const commit = git('rev-parse', '--short', 'HEAD'), count = git('rev-list', '--count', 'HEAD');
+  return {
+    version: JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version,
+    build: count ? Number(count) : null, commit, date: git('log', '-1', '--format=%cI'),
+    modified: commit ? git('status', '--porcelain', '--untracked-files=no') !== '' : false,
+  };
+}
+const VERSION = versionInfo();
+const versionText = `v${VERSION.version}${VERSION.build ? ` build ${VERSION.build}` : ''}${VERSION.commit ? ` (${VERSION.commit}${VERSION.modified ? ', modified' : ''}, ${VERSION.date.slice(0, 10)})` : ''}`;
 // The page and its control socket are for this computer only; HTTP_HOST=0.0.0.0 opens them to the network.
 // By default both local addresses are served (127.0.0.1 and ::1): browsers may reach "localhost" by
 // either, and a leftover server on the other one would otherwise answer in this one's place.
@@ -48,6 +66,7 @@ const handler = async (req, res) => {
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
     let file;
+    if (pathname === '/version.json') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(VERSION)); return; }
     if (pathname === '/cars.json') file = CARS; // the car picker's list
     else if (pathname === '/car-profiles.json') {
       file = CAR_PROFILES;
@@ -113,7 +132,7 @@ setInterval(() => {
   sentLastSecond = sent; sent = 0;
   const status = JSON.stringify({
     type: 'status', udp: udpOn, target: `${SIMHUB_HOST}:${SIMHUB_PORT}`, packetsPerSec: sentLastSecond,
-    rpm: Math.round(state.rpm), source: state.source, error: lastError,
+    rpm: Math.round(state.rpm), source: state.source, error: lastError, commit: VERSION.commit, build: VERSION.build,
   });
   for (const c of wss.clients) if (c.readyState === 1) c.send(status);
 }, 1000);
@@ -132,6 +151,7 @@ const listen = (server, host) => new Promise((resolve, reject) => {
   server.listen(HTTP_PORT, host, () => resolve(true));
 });
 for (let i = 0; i < servers.length; i++) await listen(servers[i], HTTP_HOSTS[i]);
+console.log(`audio-rpm ${versionText}`);
 console.log(`audio-rpm UI:           http://localhost:${HTTP_PORT}`);
 console.log(`SimHub UDP target:      ${SIMHUB_HOST}:${SIMHUB_PORT} (DiRT Rally 2.0 format, rpm/${RPM_DIVISOR}, sent as it arrives, ${SEND_HZ}–${MAX_HZ} Hz)`);
 console.log(`UDP output:             ${udpOn ? 'ON' : 'paused (toggle in the page, or SIMHUB_UDP=on)'}`);

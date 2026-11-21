@@ -49,6 +49,9 @@ try {
   const pageHeight = () => p.evaluate(() => document.documentElement.scrollHeight);
 
   check('page fits one screen before starting', await pageHeight() <= 900, `${await pageHeight()} px`);
+  const version = await (await p.request.get(`http://127.0.0.1:${httpPort}/version.json`)).json(), shown = await p.textContent('#version');
+  check('the version is shown next to the title', version.build ? shown === `build ${version.build}` : shown === `v${version.version}`, `"${shown}" for ${JSON.stringify(version)}`);
+  check('…with commit and date in its tooltip', !version.commit || (await p.getAttribute('#version', 'title')).includes(version.commit));
 
   // the state texts of the top bar have a fixed place: a long list of possible cars moves nothing
   const startLeft = () => p.evaluate(() => Math.round(document.getElementById('start').getBoundingClientRect().left));

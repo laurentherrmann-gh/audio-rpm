@@ -15,7 +15,9 @@ npm run init
 npm start
 ```
 
-Open **http://localhost:8777** in Chrome and press **Start**. The **Simulated engine** source needs no
+Open **http://localhost:8777** in Chrome and press **Start**. The build number next to the title says
+which version is running (hover for the commit and its date); after a `git pull`, restart `npm start`
+and reload the page. The **Simulated engine** source needs no
 setup. To listen to the Mac's own sound, install [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole)
 (`brew install blackhole-2ch`) and route the sound through it: [docs/setup.md](docs/setup.md).
 

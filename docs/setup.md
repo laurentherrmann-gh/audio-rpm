@@ -49,6 +49,11 @@ Detection runs on the audio thread and in a worker, so it keeps going when the t
 
 ## The page
 
+- **build N** (next to the title): the version the page was loaded from. The number is the count of
+  commits, so it only goes up; the tooltip has the commit and its date. If the server is restarted on
+  another version while the page is open, it turns orange and asks for a reload. `npm start` prints the
+  same version in the terminal, and `/version.json` has it for scripts.
+
 - **Car** (top bar): the 82 DiRT Rally 2.0 cars. Picking one sets its cylinder count, which is certain
   where auto-detection can be wrong (the two cars whose count isn't known stay on Auto). Idle, redline
   and the calibration are remembered per car: set them once under Settings with the car picked. The list doesn't
