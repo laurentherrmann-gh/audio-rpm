@@ -124,6 +124,7 @@ export class Pipeline {
     this.fusion = new Fusion();
     this.path = new PathTracker();
     this.shiftAt = -Infinity; // the last moment given to the shift detector
+    this.gearCar = null;      // the recognised car the gear is being counted for
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -142,6 +143,8 @@ export class Pipeline {
     this.path.set(c.pathRule);
     if (prev.cylinders !== c.cylinders || String(prev.autoCandidates) !== String(c.autoCandidates)) this.cyl = this.freshCyl();
     if (prev.car !== c.car) this.forgetCar();
+    // another car picked (or the picker moved between a car and recognising): the gear counted so far was the other car's
+    if (prev.car !== c.car || prev.carKey !== c.carKey) { this.shifts.forget(); this.gearCar = null; }
     if (prev.cylinders !== c.cylinders || prev.scale.gyro !== c.scale.gyro || prev.scale.pd !== c.scale.pd) this.reset();
   }
 
@@ -171,6 +174,10 @@ export class Pipeline {
     this.carEval = tEnd;
     const N = carFftSize(this.fs);
     this.cars.push(tEnd, snapshotOf(this.raw.latest(N, this.buf('cf', N)), this.fs));
+    // another car recognised than the one the gear was counted for: start again from "?"
+    const named = this.cars.state().car;
+    if (named && this.gearCar && named !== this.gearCar) this.shifts.forget();
+    if (named) this.gearCar = named;
     const n = this.cars.cylinders;
     if (n !== this.carCyl) {
       this.carCyl = n;

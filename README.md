@@ -32,7 +32,7 @@ like; it skips what is done. (It is not `npm init`, which is npm's own command.)
   sets the cylinder count; without one, the count is detected from the sound.
 - **Tachometer**: the combined RPM of two detectors, the gear, shift lights. The gear shows **?**
   until the car has stood at idle for a second (the start line, off the throttle): it is counted from
-  1st there.
+  1st there. Another car, picked or recognised, starts again from **?**.
 - **Send to SimHub (UDP)** (bottom of the page): off by default. To start with it on:
   `SIMHUB_UDP=on SIMHUB_HOST=192.168.1.50 npm start`. Details: [docs/simhub.md](docs/simhub.md).
 - **● Rec**: saves what the detectors heard (WAV) and what they read (CSV) to Downloads.

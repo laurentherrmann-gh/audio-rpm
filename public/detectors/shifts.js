@@ -63,6 +63,9 @@ export class ShiftDetector {
     if (maxGear) this.maxGear = maxGear;
   }
 
+  /** Another car: its gear is not known until it has been seen standing. */
+  forget() { this.gear = null; this.clear(); }
+
   /** Forget the rpm history (the rpm scale changed, or the sound stopped); the gear is kept. */
   clear() { this.hist = []; this.standAt = -Infinity; this.lastAt = -Infinity; }
 

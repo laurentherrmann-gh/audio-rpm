@@ -93,6 +93,27 @@ test('pipeline: an engine with a rough idle (long pitch window, readings 65 ms o
   assert.ok(at !== null && at < 2, `seen standing after ${at} s`);
 });
 
+test('pipeline: another car, picked or recognised, starts again from an unknown gear', () => {
+  const fs = 48000, pipe = new Pipeline(fs, 1, { cylinders: 4, carKey: 'a' });
+  pipe.shifts.gear = 3;
+  pipe.configure({ idle: 1000, carKey: 'a' }); // a setting changed, same car
+  assert.equal(pipe.shifts.gear, 3);
+  pipe.configure({ carKey: 'b' });
+  assert.equal(pipe.shifts.gear, null, 'another car picked');
+  // recognising: the first car named keeps the count (it is the car that was being driven), the next one does not
+  let name = null;
+  pipe.configure({ car: 'auto', carKey: null });
+  pipe.cars = { push() {}, reset() {}, cylinders: 4, state: () => ({ car: name }) };
+  const hear = t => { pipe.push(new Float32Array(256), new Float32Array(256)); pipe.step(t); };
+  pipe.shifts.gear = 2; hear(1);
+  name = 'a'; hear(2);
+  assert.equal(pipe.shifts.gear, 2, 'the car being driven got its name');
+  hear(3);
+  assert.equal(pipe.shifts.gear, 2);
+  name = 'b'; hear(4);
+  assert.equal(pipe.shifts.gear, null, 'another car recognised');
+});
+
 test('pipeline: shifts and gear from the sound of the stage drive', () => {
   const fs = 48000, stage = makeStageSchedule(), truth = shiftsIn(stage), T = scheduleDuration(stage);
   const signal = synthesize(stage, { fs, seconds: T, cylinders: 4 });
