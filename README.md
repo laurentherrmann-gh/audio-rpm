@@ -151,11 +151,15 @@ Before cutting anything, fetch-dr2 checks the recording:
 | clipping | flat tops at the recording's ceiling | warns |
 | level over full scale | not cut off (AAC keeps it): only loud | scales the clips down |
 | length | the recording ends before the video does | cuts only the cars that are in it |
-| cut points | the sound should change where the cars change (`tools/lib/align.js`) | reports how many car changes line up; moves the start past an ad that played first; cuts only the cars before an ad or a pause in the middle (`--all` to cut them all) |
+| cut points | the sound should change where the cars change (`tools/lib/align.js`) | reports how many car changes line up; moves the start past an ad that played first; when it is sure of an ad or a pause in the middle, cuts only the cars before it (`--all` to cut them all) |
 
-The cut-point check only acts when the first car changes clearly agree on a start; otherwise it says so
-and cuts from where the sound starts (`--offset auto`) or from the time given (`--offset 2.5`). It was
-tuned on synthetic recordings, not yet on the real video. Clips are always cut afresh, so files from an
+The cut-point check compares how well the first car changes fit the start with how well they fit any
+other start. On the real recording of the video it confirms the start (77 of 81 car changes show a
+clear change of sound; the 3 s comparison span matters, since a longer one sees the moment the driving
+starts inside every clip as clearly as the change of car). An ad before the video moves the start; an
+ad in the middle is only caught when the cars around it sound different enough (two trials on the real
+recording with 12 s inserted were both missed, so a drop in that count is the only hint: listen to a
+late clip). Clips are always cut afresh, so files from an
 earlier recording never stay behind. For one car only, pick the car in the page, use **● Rec** over its
 chapter, and run `npm run eval-dr2 -- --file ~/Downloads/audio-rpm-car20-….wav` (or
 `--file clip.wav --car 20` for any other recording of car 20).

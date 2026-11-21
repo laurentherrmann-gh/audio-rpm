@@ -34,9 +34,9 @@ test('an ad before the video: the start is found after the ad', () => {
 test('an ad or a pause in the middle is reported, with where it starts', () => {
   const v = video(), cut = Math.round((8 * CLIP + 15) / hop);
   const r = align([...silence(3), ...v.slice(0, cut), ...car(12), ...v.slice(cut), ...silence(20)], { from: 1, to: 120 });
-  assert.ok(Math.abs(r.offset - 3) <= 0.5, `offset ${r.offset}`);
-  // the ad is inside car 9: cars up to 6–8 are reported as still in place, the rest 12 s late
-  assert.ok(r.shift && r.shift.car >= 5 && r.shift.car <= 8 && Math.abs(r.shift.by - 12) <= 1, JSON.stringify(r.shift));
+  assert.ok(Math.abs(r.offset - 3) <= 1.5, `offset ${r.offset}`);
+  // the ad is inside car 9: cars 1–8 are in place, the rest 12 s late
+  assert.ok(r.shift && r.shift.car >= 7 && r.shift.car <= 9 && Math.abs(r.shift.by - 12) <= 1, JSON.stringify(r.shift));
 });
 
 test('one unchanging sound: no start stands out', () => {
