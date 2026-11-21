@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ShiftDetector } from '../public/detectors/shifts.js';
 import { replay } from '../tools/lib/audio.js';
 import { Pipeline } from '../public/pipeline.js';
-import { gearAt, makeSchedule, makeStageSchedule, rpmAt, scheduleDuration, shiftsIn, synthesize } from '../public/engine-model.js';
+import { gearAt, makeSchedule, makeStageSchedule, rpmAt, scheduleDuration, shiftsIn, synthesize, constantSchedule } from '../public/engine-model.js';
 
 const dt = 256 / 48000;
 /** Run rpm(t) through a detector; returns its shifts. */
@@ -61,6 +61,34 @@ test('the gear is unknown until the car has been standing, then counted and kept
   const { d, out } = run(step([...ups, ...downs]), 12, { idle: 900, redline: 9000, maxGear: 3 });
   assert.deepEqual(out.map(e => e.gear), [2, 3, 3, 3, 2, 1, 1, 1]);
   assert.equal(d.state().shifts, 8);
+});
+
+test('standing is seen through stray readings and short holes (a real idle), not through wandering or high revs', () => {
+  // one reading in 15 is 10% off, and now and then 0.15 s go without a reading
+  const real = t => (Math.floor(t / dt) % 15 === 7 ? 990 : Math.floor(t * 2) % 3 === 2 && t % 0.5 < 0.15 ? null : 900 + 15 * Math.sin(40 * t));
+  assert.equal(run(real, 2.5).d.gear, 1);
+  assert.equal(run(t => 900 * (1 + 0.15 * Math.sin(5 * t)), 4).d.gear, null, 'wandering revs are not standing');
+  assert.equal(run(() => 3000, 4).d.gear, null, 'steady revs far above idle are not standing');
+  assert.equal(run(t => (t % 0.6 < 0.3 ? null : 900), 4).d.gear, null, 'too many holes: not known');
+});
+
+test('pipeline: an engine with a rough idle (long pitch window, readings 65 ms old): the shift detector is fed', () => {
+  // this is what real cars do, and what broke the gear once: the detector read the path 50 ms back,
+  // where no reading had spoken yet at low revs, and was given nothing nine times out of ten
+  const fs = 48000, hop = 256, signal = synthesize(constantSchedule(900), { fs, seconds: 3, cylinders: 4, cycleLevel: 0.3 });
+  const pipe = new Pipeline(fs, 1, { cylinders: 4, idle: 900, redline: 7500 });
+  let at = null, old = 0, n = 0;
+  for (let end = hop; end <= signal.length; end += hop) {
+    const c = signal.subarray(end - hop, end);
+    pipe.push(c, c);
+    const r = pipe.step(end / fs);
+    if (r.pd?.raw > 0) { n++; if (r.pd.windowDelayMs > 50) old++; }
+    if (r.gear.gear !== null && at === null) at = end / fs;
+  }
+  assert.ok(old > 0.5 * n, `the test is about readings older than the look-back: ${old} of ${n}`);
+  const fed = pipe.shifts.hist.length; // readings of the last second (one step is 5.3 ms)
+  assert.ok(fed > 150, `fed ${fed} readings in the last second`);
+  assert.ok(at !== null && at < 2, `seen standing after ${at} s`);
 });
 
 test('pipeline: shifts and gear from the sound of the stage drive', () => {

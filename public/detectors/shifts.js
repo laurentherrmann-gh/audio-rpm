@@ -37,8 +37,10 @@ export const SHIFT = Object.freeze({
   hole: 0.08,
   apart: 0.5,      // s between two shifts at least
   standRevs: 1.6,  // standing = revs below this many times the idle setting…
-  standBand: 0.06, // …steady within ±6%…
-  standHold: 1,    // …for this long
+  standBand: 0.06, // …steady within ±6% of their median…
+  standHold: 1,    // …for this long…
+  standShare: 0.8, // …for this share of the readings (the rest are strays)…
+  standGap: 0.25,  // …with no hole in them longer than this (s)
   maxGear: 6,
   memory: 1,       // s of rpm history kept
 });
@@ -60,7 +62,7 @@ export class ShiftDetector {
   }
 
   /** Forget the rpm history (the rpm scale changed, or the sound stopped); the gear is kept. */
-  clear() { this.hist = []; this.stand = null; this.lastAt = -Infinity; }
+  clear() { this.hist = []; this.standAt = -Infinity; this.lastAt = -Infinity; }
 
   /** Line through the history between a and b s: value at `at`, slope per s, rms misfit; null without enough readings. */
   line(a, b, at) {
@@ -89,7 +91,7 @@ export class ShiftDetector {
     const p = this.p, h = this.hist;
     h.push({ t, x: Math.log(rpm) });
     while (h.length && h[0].t < t - p.memory) h.shift();
-    this.standing(t, rpm);
+    this.standing(t);
 
     // Did the revs step, `gap + after` ago? In gear they follow the car's speed: a straight line over
     // a third of a second. A shift is a break between two such lines: fit one before the gap and
@@ -130,13 +132,32 @@ export class ShiftDetector {
     return this.last;
   }
 
-  /** Steady revs near idle for a while: the car is standing, so the next gear is 1st. */
-  standing(t, rpm) {
-    const low = rpm < this.p.standRevs * this.idle;
-    const st = this.stand;
-    if (!low || (st && Math.abs(rpm / st.rpm - 1) > this.p.standBand)) { this.stand = low ? { t, rpm } : null; return; }
-    if (!st) { this.stand = { t, rpm }; return; }
-    if (t - st.t >= this.p.standHold) this.gear = 1;
+  /**
+   * Steady revs near idle for a while: the car is standing, so the next gear is 1st. Judged on all
+   * the readings of the last `standHold` s together (their median, and how many are near it), not
+   * reading by reading: the rpm is made of raw readings, and at a real idle a stray one or a short
+   * hole comes every second or so. One stray used to start the wait again, and the gear never came.
+   */
+  standing(t) {
+    const p = this.p, h = this.hist;
+    if (t - this.standAt < 0.1) return; // ten times a second is plenty
+    this.standAt = t;
+    const from = t - p.standHold;
+    let i0 = 0;
+    while (i0 < h.length && h[i0].t < from) i0++;
+    const n = h.length - i0;
+    if (n < 10 || h[i0].t > from + p.standGap) return; // the readings don't go back that far
+    const xs = [];
+    for (let i = i0; i < h.length; i++) {
+      if (i > i0 && h[i].t - h[i - 1].t > p.standGap) return; // a hole: not known to be standing
+      xs.push(h[i].x);
+    }
+    xs.sort((x, y) => x - y);
+    const mid = xs[n >> 1], band = Math.log(1 + p.standBand);
+    if (mid >= Math.log(p.standRevs * this.idle)) return;
+    let near = 0;
+    for (const x of xs) if (Math.abs(x - mid) <= band) near++;
+    if (near >= p.standShare * n) this.gear = 1;
   }
 
   state() { return { gear: this.gear, shifts: this.count, last: this.last }; }

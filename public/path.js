@@ -35,6 +35,7 @@ export const PATH = Object.freeze({
   span: 0.11,     // s of path re-done as late readings arrive (the oldest reading: gyroball's, 85 ms)
   slopeSpan: 0.06, // s of path before the newest reading that its rate of change is measured over…
   carry: 0.5,     // …and the share of it carried on over the moments no reading speaks of yet
+  late: 0.1,      // s without a reading of any moment since: the readings have stopped (a reading is up to 85 ms old when it comes)
   coast: 0.3,     // s the last value is held when no reading comes
 });
 
@@ -180,10 +181,17 @@ export class PathTracker {
       for (let i = Math.max(newest, j - 4); i <= Math.min(this.M, j + 4) && !heard; i++) { const s = this.slot(this.k - i); heard = s.k === this.k - i && s.rpm.length > 0; }
       return { rpm: v.rpm, source: v.key || 'path', held: !heard };
     }
-    // no reading speaks of that moment yet: the newest one that does, carried on by part of the path's slope there
-    if (newest > this.M) return { rpm: rpmOf(this.trail[j]), source: 'held', held: true };
+    // no reading speaks of that moment yet: the newest one that does, carried on by part of the path's
+    // slope there. That is the ordinary case at low revs (pitch-detection's window is long there, its
+    // reading 65 ms old when it comes), so it is `carried`, not `held`; held is for when the readings
+    // have stopped coming.
+    const held = (newest - j) * PATH.dt > PATH.late;
+    if (newest > this.M) return { rpm: rpmOf(this.trail[j]), source: 'held', held: true, carried: true };
     const v = this.valueAt(newest), far = Math.min(this.M, newest + Math.round(PATH.slopeSpan / PATH.dt));
     const slope = far > newest ? (this.trail[newest] - this.trail[far]) / (far - newest) : 0; // grid steps per moment
-    return { rpm: v.rpm * 2 ** ((Math.max(-2.5, Math.min(2.5, slope)) * (newest - j) * PATH.carry) / PATH.perOctave), source: v.key || 'path', held: true };
+    return { rpm: v.rpm * 2 ** ((Math.max(-2.5, Math.min(2.5, slope)) * (newest - j) * PATH.carry) / PATH.perOctave), source: v.key || 'path', held, carried: true };
   }
+
+  /** How far back (s) the newest moment is that a reading speaks of; Infinity before the first. */
+  behind() { return this.k === null || !Number.isFinite(this.informed) ? Infinity : (this.k - this.informed) * PATH.dt; }
 }

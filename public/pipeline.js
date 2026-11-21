@@ -32,7 +32,7 @@ import { CarMatcher, snapshotOf, carFftSize, CAR_ID } from './detectors/car-id.j
 import { TONES, orderLevels, toneDistance } from './detectors/tones.js';
 import { ShiftDetector } from './detectors/shifts.js';
 import { Fusion } from './fusion.js';
-import { PathTracker } from './path.js';
+import { PathTracker, PATH } from './path.js';
 import { Tracker } from './tracker.js';
 import { firingHz, rpmFromFiringHz, RALLY_CYLINDERS } from './engine-model.js';
 import { Ring } from './ring.js';
@@ -123,6 +123,7 @@ export class Pipeline {
     this.shifts = new ShiftDetector();
     this.fusion = new Fusion();
     this.path = new PathTracker();
+    this.shiftAt = -Infinity; // the last moment given to the shift detector
     this.bufs = new Map();
     this.windows = new Map();
     this.cfg = merge(DEFAULTS, {});
@@ -146,7 +147,7 @@ export class Pipeline {
 
   /** The rpm scale changed: restart the trackers, and don't take the jump for a gear shift. */
   reset() {
-    this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.path.reset(); this.shifts.clear();
+    this.trackers.gyro.reset(); this.trackers.pd.reset(); this.fusion.reset(); this.path.reset(); this.shifts.clear(); this.shiftAt = -Infinity;
     this.gyroLast = null; this.gyroSpec = null; this.firing = {};
     this.scale = (this.scale || 0) + 1; // readings taken before and after are not comparable
   }
@@ -376,11 +377,19 @@ export class Pipeline {
     const look = Math.max(0, Math.min(0.1, this.cfg.look)), now = this.scale === scale ? this.path.read(look) : null;
     // at: the moment the value describes (cfg.look back from now)
     const fused = now ? { rpm: now.rpm, source: now.source, coast: now.held && look > 0, at: tEnd - look } : { rpm: null, source: '', coast: false, at: tEnd - look };
-    // shifts are found on the path a little further back, where it is surer (they are reported
-    // a third of a second after the fact anyway)
-    const then = this.scale === scale ? this.path.read(this.cfg.shiftLook) : null;
-    const shift = this.shifts.push(tEnd - this.cfg.shiftLook, then && !then.held ? then.rpm : null);
-    if (shift) shift.t = tEnd; // reported now
+    // Shifts are found on the path a little further back, where it is surer (they are reported a
+    // third of a second after the fact anyway), and never ahead of the newest reading: at low revs
+    // pitch-detection's reading is 65 ms old when it comes, and the detector must not go without
+    // (it did, and never saw the car standing: no gear).
+    if (this.scale === scale) {
+      const back = Math.max(this.cfg.shiftLook, this.path.behind()), at = tEnd - back;
+      if (back <= PATH.span && at > this.shiftAt) {
+        const then = this.path.read(back);
+        this.shiftAt = at;
+        const shift = this.shifts.push(at, then && !then.held ? then.rpm : null);
+        if (shift) shift.t = tEnd; // reported now
+      }
+    }
     return { gyro, pd, fused, cyl: this.cylState(), car: this.carState(), gear: this.shifts.state() };
   }
 

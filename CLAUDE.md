@@ -53,5 +53,8 @@
   clips: the simulator's rpm is too smooth to show false shifts; but keep its tests, they caught a
   longer gap taking a lift for a shift. Anything that changes the combined rpm changes the shifts:
   re-run eval-shifts after touching the path, its look-backs or the detectors.
+  eval-shifts does not test the gear becoming known: the car stands for a second in only 3 of the 80
+  clips (12 Sierra RS500, 55 Camaro, 56 Mustang GT4). That is tested in `test/shifts.test.js` (a real
+  idle: stray readings, holes, readings 65 ms old); it broke once without any measured number moving.
 - The user runs this on a Retina Mac (devicePixelRatio 2). Test UI changes at deviceScaleFactor 2.
   Canvas CSS height comes from `data-h`; never read it back from the canvas element.

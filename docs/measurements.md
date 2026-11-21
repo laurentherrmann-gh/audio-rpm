@@ -482,6 +482,20 @@ on the throttle), which the simulator showed at once. Hence the quick-step rule,
 points of shifts found and removes a third of the false ones; placing the shift where the step is,
 not in the middle of the gap, is what brought the ratio error from 5% to 3%.
 
+**Seeing the car stand.** The gear is counted from 1st once the car has been seen standing: over
+one second, the median of the readings is below 1.6 × the idle setting and 80% of them are within 6%
+of it, with no hole longer than 0.25 s. The first build with the path lost the gear altogether on
+real sound, for two reasons that the 80 clips could not show (they are showcases: the car stands
+for a second in 3 of them). The shift detector read the path 50 ms back, and at low revs
+pitch-detection's window is long: its reading is 65 ms old when it comes, so the detector was given
+nothing most of the time. And standing was judged reading by reading (each within 6% of the first),
+which the smoothed rpm of the rules passed and raw readings do not: one stray started the second
+again. The detector now reads the path at the newest moment a reading speaks of (50 ms back or
+more), and standing is judged on the second as a whole. On the three clips: Ford Sierra Cosworth
+RS500 in 1st after 0.8 s (never, in that build), Chevrolet Camaro GT4.R after 6.1 s (24.8 s), Ford
+Mustang GT4 after 6.5 s (6.7 s); the rules gave 1.3, 6.5 and 6.6 s. Shifts found and false shifts
+are unchanged by it (306 of 363, 7%).
+
 What this means for the gear on the tach: on a real stage it is right after a standstill and for the
 next few shifts, then drifts: one shift in six is missed, one reported shift in fourteen is false,
 and revving in neutral still gives a few. All clean shifts are found on 36 of the 74 cars that have

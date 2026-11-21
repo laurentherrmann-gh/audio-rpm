@@ -70,6 +70,16 @@ test('pitch-detection jumping to twice the revs for a tenth of a second is not f
   assert.ok(out.filter(o => o.t > 0.3).every(o => off(o, truth, 0.03) < 0.02));
 });
 
+test('low revs: readings come 65 ms old, so 30 ms back is carried on from the newest one, not held', () => {
+  const p = new PathTracker(), dtS = 256 / 48000;
+  let r = null;
+  for (let t = 0; t < 1; t += dtS) { p.push(t, [{ rpm: 900, age: 0.065, key: 'pitch' }]); r = p.read(0.03); }
+  assert.ok(r && r.carried && !r.held && Math.abs(r.rpm / 900 - 1) < 0.01, JSON.stringify(r));
+  assert.ok(Math.abs(p.behind() - 0.065) < 0.006, `the newest reading speaks of ${p.behind()} s ago`);
+  const at = p.read(p.behind());
+  assert.ok(at && !at.carried && !at.held, 'read there, it is a reading');
+});
+
 test('nothing heard: the last value is held for a while, then there is none', () => {
   const p = new PathTracker(), truth = () => 4000;
   assert.equal(p.read(0), null, 'nothing yet');
