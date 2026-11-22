@@ -98,8 +98,14 @@ export function snapshotOf(frame, fs, silentDb = CAR_ID.silentDb) {
 /** Every snapshot of a recording (one per CAR_ID.every), silent moments left out. */
 export function snapshotsOf(samples, fs) {
   const N = carFftSize(fs), hop = Math.round(CAR_ID.every * fs), out = [];
+  // silence is judged as it is live: against the loudest second of the recording, so that one made
+  // with the input's volume turned down is learned like any other (never above the fixed line, which
+  // is what recordings at an ordinary level have always been learned with)
+  let loud = 0;
+  for (let a = 0; a + fs <= samples.length; a += fs) { let sum = 0; for (let i = a; i < a + fs; i++) sum += samples[i] * samples[i]; loud = Math.max(loud, sum / fs); }
+  const silentDb = Math.min(CAR_ID.silentDb, 10 * Math.log10(Math.max(loud, 1e-20)) - CAR_ID.silentBelow);
   for (let end = N; end <= samples.length; end += hop) {
-    const s = snapshotOf(samples.subarray(end - N, end), fs);
+    const s = snapshotOf(samples.subarray(end - N, end), fs, silentDb);
     if (s) out.push(s);
   }
   return out;

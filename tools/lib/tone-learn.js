@@ -18,19 +18,23 @@ export function trustedFrames(ref, cylinders) {
 
 /**
  * @param {Float32Array} samples  @param {number} fs  @param {number} cylinders
- * @param {{ ref?: object, keep?: (t:number) => boolean }} [opts] keep: which moments to learn from (default all)
+ * @param {{ ref?: object, keep?: (t:number) => boolean, rpmAt?: (t:number) => number|null }} [opts]
+ *   keep: which moments to learn from (default all). rpmAt: the true rpm at a moment of the sound, when
+ *   it is known (a recording with the game's telemetry): the reference is then not needed.
  * @returns {{ map: object, frames: number }} frames = spectra learned from
  */
-export function learnTones(samples, fs, cylinders, { ref = referenceRpm(samples, fs, { cylinders }), keep = () => true } = {}) {
-  const trusted = trustedFrames(ref, cylinders), learner = new ToneLearner();
+export function learnTones(samples, fs, cylinders, { rpmAt = null, ref = rpmAt ? null : referenceRpm(samples, fs, { cylinders }), keep = () => true } = {}) {
+  const trusted = ref ? trustedFrames(ref, cylinders) : null, learner = new ToneLearner();
   let frames = 0;
   replay(samples, fs, { cylinders, idle: 800, redline: 9000, gyro: { every: 0.05 } }, (t, r, pipe) => {
     const spec = pipe.gyroSpec;
     if (!spec || spec.t !== t || !keep(t)) return; // a new spectrum this step
-    const i = Math.round((t - HALF_WINDOW - ref.t[0]) / REF.hop);
-    if (!(i >= 0 && trusted[i])) return;
-    const levels = orderLevels(spec.db, spec.binHz, ref.rpm[i] / 120);
-    if (levels) { learner.add(ref.rpm[i], levels); frames++; }
+    let rpm;
+    if (rpmAt) rpm = rpmAt(t - HALF_WINDOW);
+    else { const i = Math.round((t - HALF_WINDOW - ref.t[0]) / REF.hop); rpm = i >= 0 && trusted[i] ? ref.rpm[i] : null; }
+    if (!(rpm > 0)) return;
+    const levels = orderLevels(spec.db, spec.binHz, rpm / 120);
+    if (levels) { learner.add(rpm, levels); frames++; }
   });
   return { map: learner.map(), frames };
 }

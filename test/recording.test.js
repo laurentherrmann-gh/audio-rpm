@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gearAt, makeStageSchedule, rpmAt, scheduleDuration, shiftsIn, synthesize } from '../public/engine-model.js';
 import { buildDr2Packet } from '../src/dr2-packet.js';
-import { ClockMap, readTelemetry, recordingName } from '../tools/lib/recording.js';
+import { ClockMap, TELEMETRY_COLUMNS, floatWavHeader, readTelemetry, recordingName, telemetryRow } from '../tools/lib/recording.js';
 import { readWav } from '../tools/lib/audio.js';
 import { scoreRecording, trueShifts } from '../tools/eval-recording.js';
 
@@ -81,5 +81,32 @@ test('npm run record: sound from a command and packets from a socket end up in o
     assert.ok(rows.every((r, i) => r.t >= 0 && r.t <= samples.length / fs && (i === 0 || r.t >= rows[i - 1].t)), 'packets are timed inside the sound, in order');
     assert.ok(rows.every(r => r.gear === 2 && r.rpm >= 3000), 'and carry what the game said');
     assert.ok(readFileSync(base + '.telemetry.bin').length === rows.length * (10 + 264), 'the packets themselves are kept too');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('npm run learn-cars: a recording with telemetry becomes the car\'s profile for that camera, with the game\'s rev limits', () => {
+  // a quiet recording (the input's volume turned down) of the simulated stage, the sound 40 ms behind the packets
+  const dir = mkdtempSync(path.join(tmpdir(), 'audio-rpm-learn-')), rec = path.join(dir, 'recordings'), fs = 48000, late = 0.04;
+  mkdirSync(rec);
+  const stage = makeStageSchedule(), T = scheduleDuration(stage), x = synthesize(stage, { fs, seconds: T, cylinders: 4, cycleLevel: 0.3 });
+  const base = path.join(rec, recordingName('Simulated car', 'Bonnet', new Date(2026, 10, 22, 10, 0, 0))), pad = Math.round(late * fs), pcm = Buffer.alloc((x.length + pad) * 4);
+  for (let i = 0; i < x.length; i++) pcm.writeFloatLE(x[i] * 0.01, (i + pad) * 4);
+  writeFileSync(base + '.wav', Buffer.concat([floatWavHeader(fs, x.length + pad), pcm]));
+  const rows = [];
+  for (let t = 0; t < T; t += 1 / 60) rows.push(telemetryRow(t, t, { time: t, rpm: rpmAt(stage, t), gear: gearAt(stage, t), speed: rpmAt(stage, t) > 1000 ? 20 : 0, throttle: 0.5, brake: 0, clutch: 0, steer: 0, distance: 0 }));
+  writeFileSync(base + '.telemetry.csv', TELEMETRY_COLUMNS.join(',') + '\n' + rows.join('\n') + '\n');
+  writeFileSync(base + '.json', JSON.stringify({ car: 'Simulated car', carKey: 'simulated-car', camera: 'Bonnet', cylinders: 4, idleRpm: 900, maxRpm: 7500, maxGears: 5 }));
+  writeFileSync(path.join(dir, 'cars.json'), JSON.stringify({ cars: [{ car: 'Simulated car', cylinders: 4 }] }));
+  try {
+    const r = spawnSync('node', ['tools/cars.js', 'learn', '--dir', dir, '--manifest', path.join(dir, 'cars.json'), '--recordings', rec], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const car = JSON.parse(readFileSync(path.join(dir, 'car-profiles.json'), 'utf8')).cars['simulated-car'];
+    assert.ok(car, r.stdout);
+    assert.deepEqual([car.n, car.cylinders, car.revs.idle, car.revs.redline, car.revs.gears], [1, 4, 900, 7500, 5]);
+    assert.equal(car.parts.length, 1);
+    const part = car.parts[0];
+    assert.deepEqual([part.camera, part.truth, part.source], ['Bonnet', 'telemetry', path.basename(base) + '.wav']);
+    assert.ok(part.centroids.length > 0, 'the sound is learned for recognition, quiet as it is');
+    assert.ok(part.tones && part.tones.n.at(-1) > 100, `a tone map from the game's rpm (${part.tones?.n.at(-1)} spectra)`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

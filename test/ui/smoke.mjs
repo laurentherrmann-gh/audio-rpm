@@ -8,7 +8,9 @@
 import { spawn, execSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import { createRequire } from 'node:module';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDr2Packet } from '../../src/dr2-packet.js';
@@ -32,7 +34,11 @@ const packets = [];
 const udp = createSocket('udp4');
 udp.on('message', m => { try { packets.push({ at: Date.now(), ...parseDr2Packet(m, { rpmDivisor: 10 }) }); } catch { /* not ours */ } });
 await new Promise(res => udp.bind(udpPort, '127.0.0.1', res));
-const server = spawn('node', ['server.js'], { cwd: ROOT, env: { ...process.env, HTTP_PORT: String(httpPort), SIMHUB_PORT: String(udpPort), SIMHUB_UDP: 'on' }, stdio: 'ignore' });
+// learned profiles of its own, so that the checks do not depend on what this machine has learned: one car
+// with the game's rev limits, as a recording with telemetry gives them (npm run record, npm run learn-cars)
+const profileFile = path.join(mkdtempSync(path.join(tmpdir(), 'audio-rpm-ui-')), 'car-profiles.json');
+writeFileSync(profileFile, JSON.stringify({ version: 1, cars: { 'peugeot-205-gti': { car: 'Peugeot 205 GTI', n: 4, cylinders: 4, parts: [], revs: { idle: 1100, redline: 8200, gears: 5 } } } }));
+const server = spawn('node', ['server.js'], { cwd: ROOT, env: { ...process.env, HTTP_PORT: String(httpPort), SIMHUB_PORT: String(udpPort), SIMHUB_UDP: 'on', CAR_PROFILES: profileFile }, stdio: 'ignore' });
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 
 try {
@@ -72,6 +78,10 @@ try {
   check('another car has its own cylinders and the general redline', await p.inputValue('#cylinders') === '6' && await p.inputValue('#redline') === '7500');
   await p.selectOption('#car', 'audi-sport-quattro-s1-e2');
   check('the Audi\'s redline is remembered', await p.inputValue('#redline') === '8500');
+  await p.selectOption('#car', 'peugeot-205-gti');
+  check('a car recorded with telemetry gets the game\'s idle, redline and gear count', await p.inputValue('#idle') === '1100' && await p.inputValue('#redline') === '8200' && await p.inputValue('#maxgear') === '5',
+    `${await p.inputValue('#idle')} / ${await p.inputValue('#redline')} / ${await p.inputValue('#maxgear')}`);
+  await set('maxgear', '6');
 
   // simulated stage on a 4-cylinder: combined rpm, gear, shifts
   await p.selectOption('#car', '');

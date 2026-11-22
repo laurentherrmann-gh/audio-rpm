@@ -158,6 +158,47 @@ camera and your driving. (Record on the PC, play where you like.)
    the car was seen standing, each against the game's own values. The report is written beside the
    recording (`.report.md`).
 
+6. Learn it:
+
+   ```sh
+   npm run learn-cars
+   ```
+
+   Every recording in `recordings/` becomes a part of its car's profile, one per camera: the sound
+   for recognition, a tone map made from the game's own rpm (not from the offline reference), and
+   the game's idle, redline and number of gears, which the page then uses for that car unless you
+   have set your own. Reload the page afterwards. `eval-recording` never scores a recording with
+   the tone map learned from that same recording.
+
+#### What to drive
+
+A recording answers a question only if the thing asked about happens in it. Per car and camera,
+two recordings of two to four minutes:
+
+**A. The car, piece by piece** (the DirtFish free-roam area if you have it, else the start of any
+stage). Leave a second or two between the pieces.
+
+1. Stand at idle for 5 s, foot off the throttle. (Is the car seen standing? What does it idle at?)
+2. Still standing, rev slowly up to the limiter and back down, over some 10 s; hold the limiter for
+   2 s. (Every rpm of the tone map; the limiter, where both detectors tend to slip to half.)
+3. Launch and pull through every gear, flat out, to the limiter each time if the place allows.
+   (Upshifts, the gear ratios, and how fast the revs rise in each gear.)
+4. In a high gear, lift off and coast for 5 s. (A lift is not a shift.)
+5. Brake and go down through every gear to a stop. (Downshifts, and standing again.)
+6. Hold the revs steady for 3 s, around the middle and near the top of the range.
+
+**B. A stage as you drive it**, co-driver and all, at your usual volumes. Then **the first minute of
+the same stage again with the game's speech volume at zero**: the difference between the two
+reports is what the co-driver's voice really costs, in place of the made-up voice of
+[measurements.md](measurements.md).
+
+Which cars first: the ones you drive, on the camera you drive them with. After those, the cars the
+clips score worst on (Peugeot 206 Rally, Aston Martin V8 Vantage GT4, Volkswagen Golf GTI 16v, Lancia
+037, Audi Sport quattro S1 E2, Subaru WRX STI RX).
+
+After each one, `npm run eval-recording` writes a `.report.md` beside it: that small file is what to
+send first. The sound itself (11 MB a minute) is only needed when a report raises a question.
+
 A recording is four files in `recordings/` (not in the repository): the sound (`.wav`, mono 32-bit
 float), the telemetry on the sound's clock (`.telemetry.csv`: rpm, gear, speed, pedals, steering),
 the packets as they came (`.telemetry.bin`), and what it is (`.json`). The sound reaches the recorder

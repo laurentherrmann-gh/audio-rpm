@@ -151,7 +151,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (opt('cylinders') === 'auto') meta.cylinders = null;
   // the car's tone maps, if it was learned (npm run learn-cars)
   let maps = null;
-  try { maps = JSON.parse(readFileSync(path.join(ROOT, 'samples/dr2/car-profiles.json'), 'utf8')).cars?.[meta.carKey]?.parts?.map(p => p.tones).filter(Boolean); } catch { /* none learned */ }
+  // (not the one learned from this very recording: that would be scoring it on what it taught)
+  try { maps = JSON.parse(readFileSync(path.join(ROOT, 'samples/dr2/car-profiles.json'), 'utf8')).cars?.[meta.carKey]?.parts?.filter(p => p.source !== path.basename(base) + '.wav').map(p => p.tones).filter(Boolean); } catch { /* none learned */ }
   const s = scoreRecording({ fs, samples, rows, meta, cfg: opt('cfg') ? JSON.parse(opt('cfg')) : {}, prepare: pipe => { if (maps?.length && meta.carKey) pipe.tones = { [meta.carKey]: maps }; } });
   const lines = reportLines(path.basename(base), meta, s);
   writeFileSync(base + '.report.md', lines.join('\n') + '\n');

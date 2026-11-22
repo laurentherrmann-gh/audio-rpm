@@ -120,12 +120,15 @@ async function loadCars() {
 /** Calibration a car starts from: 1, or the manifest's factor for a car whose loudest rhythm is not the firing tone. */
 const carScales = key => { const k = carByKey(key)?.scale ?? 1; return { gyro: k, pd: k }; };
 function applyRevs(key) { // a car's remembered idle, redline and calibration (or the no-car ones) into the settings
-  const own = profiles[key], p = own ?? profiles[''];
+  // what you set for the car comes first; then what the game itself said in a recording with telemetry
+  // (npm run record, npm run learn-cars); then the no-car values
+  const own = profiles[key], game = carProfiles?.cars?.[key]?.revs, p = own ?? (game ? { idle: game.idle, redline: game.redline } : profiles['']);
   $('idle').value = p.idle; $('redline').value = p.redline;
-  for (const id of ['idle', 'redline']) store.set(id, val(id));
+  if (!own && game?.gears) $('maxgear').value = game.gears;
+  for (const id of ['idle', 'redline', 'maxgear']) store.set(id, val(id));
   scales = { ...carScales(key), ...(own ? own.scales : null) }; // a calibration belongs to one car's sound
   store.set('scales', scales); showScales();
-  return { own, text: `idle ${p.idle} · redline ${p.redline} rpm` };
+  return { own, text: `idle ${p.idle} · redline ${p.redline} rpm` + (!own && game ? `${game.gears ? ` · ${game.gears} gears` : ''} (the game's own, from a recording)` : '') };
 }
 /** Remember the current idle, redline and calibration for the car they belong to. */
 function saveProfile() {

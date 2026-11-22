@@ -2,11 +2,14 @@
 //   npm run learn-cars                        learn every car found in samples/dr2/ (cut by npm run fetch-dr2)
 //   npm run learn-cars -- --file a.wav b.wav  add your own recordings of a car: made in the page with the
 //                                             car picked (audio-rpm-carNN-….wav), or any WAV with --car n
+//                                             Recordings with the game's telemetry (npm run record, in recordings/) are
+//                                             learned too, one profile part per car and camera: their tone map comes from
+//                                             the game's own rpm, and the game's idle, redline and gear count are kept.
 //   npm run eval-cars                         learn from the first 60% of each clip, recognise the rest
 //   npm run eval-cars -- --file rec.wav       recognise a recording with the learned profiles
 // Profiles go to samples/dr2/car-profiles.json (git-ignored with the audio); the page loads them from
 // there. They hold band levels only, no audio. eval-cars writes samples/dr2/results-cars.md.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CAR_ID, CarMatcher, distanceTo, learn, loadProfiles, snapshotsOf } from '../public/detectors/car-id.js';
@@ -14,6 +17,8 @@ import { carNumberIn, fileFor, slug } from '../public/cars.js';
 import { readWav, cylName } from './lib/audio.js';
 import { TONES } from '../public/detectors/tones.js';
 import { learnTones } from './lib/tone-learn.js';
+import { readTelemetry } from './lib/recording.js';
+import { scoreRecording } from './eval-recording.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [command, ...argv] = process.argv.slice(2);
@@ -22,6 +27,7 @@ const files = argv.filter(a => /\.wav$/i.test(a)).map(f => path.resolve(f));
 const dir = path.resolve(ROOT, opt('dir', 'samples/dr2'));
 const manifest = JSON.parse(readFileSync(path.resolve(ROOT, opt('manifest', 'samples/dr2-cars.json')), 'utf8'));
 const profilesPath = path.join(dir, 'car-profiles.json');
+const recDir = path.resolve(ROOT, opt('recordings', 'recordings'));
 const MIN_SNAPSHOTS = 50; // 5 s of sound: less is not enough to learn a car from
 const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 const name = n => (n ? cylName(n) : 'cyl ?');
@@ -37,11 +43,12 @@ function writeProfiles(p) {
   writeFileSync(profilesPath, JSON.stringify(p) + '\n');
 }
 /** Add (or replace) what one recording teaches about a car. */
-function addPart(p, car, source, frames, tones = null) {
+function addPart(p, car, source, frames, tones = null, extra = null) {
   const entry = (p.cars[car.key] ??= { car: car.car, n: car.n, cylinders: car.cylinders, parts: [] });
+  if (car.revs) entry.revs = car.revs; // the game's own idle, redline and gear count, from a recording with telemetry
   const { centroids, spread } = learn(frames);
   entry.parts = entry.parts.filter(x => x.source !== source);
-  entry.parts.push({ source, seconds: Math.round(frames.length * CAR_ID.every), spread, centroids, ...(tones ? { tones } : null) });
+  entry.parts.push({ source, ...extra, seconds: Math.round(frames.length * CAR_ID.every), spread, centroids, ...(tones ? { tones } : null) });
 }
 /**
  * The car's tone map from one recording (public/detectors/tones.js): how loud each of the engine's
@@ -50,10 +57,40 @@ function addPart(p, car, source, frames, tones = null) {
  */
 function tonesOf(car) {
   if (!car.cylinders) return null;
-  const { fs, samples } = readWav(car.file), { map, frames } = learnTones(samples, fs, car.cylinders);
+  const { fs, samples } = readWav(car.file), { map, frames } = learnTones(samples, fs, car.cylinders, car.rpmAt ? { rpmAt: car.rpmAt } : {});
   return frames >= TONES.minFrames ? map : null;
 }
+const isRecording = file => existsSync(file.replace(/\.wav$/i, '.telemetry.csv'));
+/** Recordings with telemetry in recordings/. */
+const recordings = () => (existsSync(recDir) ? readdirSync(recDir).filter(f => /\.wav$/i.test(f)).map(f => path.join(recDir, f)).filter(isRecording) : []);
+/**
+ * A recording with the game's telemetry as a car to learn: which car and camera it says it is, the
+ * game's rev limits, and the true rpm at each moment of the sound (the sound's delay behind the
+ * packets is measured first, as eval-recording does).
+ */
+function carOfRecording(file) {
+  const { meta, rows } = readTelemetry(file), key = meta.carKey ?? slug(meta.car ?? path.basename(file).split('--')[0]);
+  const i = manifest.cars.findIndex(c => slug(c.car) === key), base = i >= 0 ? carOf(i) : { car: meta.car ?? key, n: null, key, cylinders: meta.cylinders ?? null };
+  const car = { ...base, file, camera: meta.camera ?? null, recording: true };
+  if (meta.idleRpm > 0 && meta.maxRpm > 0) car.revs = { idle: meta.idleRpm, redline: meta.maxRpm, gears: meta.maxGears || null, source: path.basename(file) };
+  if (rows.length >= 100 && car.cylinders) {
+    const { fs, samples } = readWav(file), score = scoreRecording({ fs, samples, rows, meta: { ...meta, cylinders: car.cylinders } });
+    car.delay = score.delay;
+    car.rpmAt = t => { // the telemetry's rpm at a moment of the sound, where the revs do not move too fast for a spectrum
+      const u = t - score.delay;
+      let lo = 0, hi = rows.length - 1;
+      if (u < rows[0].t || u > rows[hi].t) return null;
+      while (lo < hi) { const m = (lo + hi + 1) >> 1; if (rows[m].t <= u) lo = m; else hi = m - 1; }
+      const a = rows[lo], b = rows[Math.min(rows.length - 1, lo + 1)];
+      if (!(a.rpm > 0) || b.t - a.t > 0.15) return null;
+      const w = b.t > a.t ? (u - a.t) / (b.t - a.t) : 0, rpm = a.rpm + w * (b.rpm - a.rpm), far = rows[Math.min(rows.length - 1, lo + 6)];
+      return far.t > a.t && Math.abs(Math.log(far.rpm / a.rpm)) / (far.t - a.t) > 1.5 ? null : rpm;
+    };
+  }
+  return car;
+}
 function carForFile(file) {
+  if (isRecording(file)) return carOfRecording(file);
   const n = Number(opt('car')) || carNumberIn(path.basename(file));
   if (!n || !manifest.cars[n - 1]) {
     console.error(`${path.basename(file)}: which car? Record in the page with the car picked (the name then has carNN), or add --car n (number in samples/dr2-cars.json).`);
@@ -65,7 +102,7 @@ function carForFile(file) {
 function learnCommand() {
   const p = readProfiles();
   let learned = 0, mapped = 0;
-  const todo = files.length ? files.map(file => ({ ...carForFile(file), file })) : clips();
+  const todo = files.length ? files.map(file => ({ ...carForFile(file), file })) : [...clips(), ...recordings().map(carOfRecording)];
   if (!todo.length) { console.error(`No car files in ${path.relative(ROOT, dir)}/. Run npm run fetch-dr2 first, or give --file <recording.wav>.`); process.exit(1); }
   for (const car of todo) {
     const frames = snapshots(car.file);
@@ -75,7 +112,8 @@ function learnCommand() {
     }
     const tones = tonesOf(car);
     if (tones) mapped++;
-    addPart(p, car, path.basename(car.file), frames, tones);
+    addPart(p, car, path.basename(car.file), frames, tones, car.recording ? { camera: car.camera, truth: car.rpmAt ? 'telemetry' : 'reference' } : null);
+    if (car.recording && !files.length) console.log(`\r  ${car.car}, camera "${car.camera}": learned from ${path.basename(car.file)}${tones ? ` (tone map from the game's rpm, the sound ${Math.round((car.delay ?? 0) * 1000)} ms behind it)` : ''}${car.revs ? ` · idle ${car.revs.idle}, redline ${car.revs.redline}, ${car.revs.gears ?? '?'} gears` : ''}${car.n ? '' : ' · not in the car list: the page cannot pick it'}`);
     learned++;
     if (files.length) console.log(`  ${car.car} (${name(car.cylinders)}): learned from ${path.basename(car.file)}, ${(frames.length * CAR_ID.every).toFixed(0)} s of sound${tones ? `, tone map from ${Math.round(tones.n.at(-1) * 0.05)} s of it` : ', no tone map (the rpm could not be read from it)'}`);
     else process.stdout.write(`\r  ${learned} of ${todo.length} cars…`);
