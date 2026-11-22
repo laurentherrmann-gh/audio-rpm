@@ -90,6 +90,7 @@ writeSync(wav, floatWavHeader(FS, 0));
 
 const t0 = performance.now(), wall = () => (performance.now() - t0) / 1000;
 const clock = new ClockMap(FS), packets = [];
+let silentFor = 0;
 let samples = 0, rest = Buffer.alloc(0), sumSq = 0, sumN = 0, lastSound = null, last = null, perSecond = 0, bad = 0, stopping = false;
 
 const LIMIT = Number(opt('seconds', 0));
@@ -128,6 +129,11 @@ const status = setInterval(() => {
   const tele = !last ? `no packet yet on udp/${PORT} (is the game on a stage, with udp enabled in hardware_settings_config.xml?)`
     : `${perSecond} packets/s · ${last.rpm.toFixed(0).padStart(5)} rpm · gear ${last.gear >= 1 && last.gear < 10 ? last.gear.toFixed(0) : last.gear === 0 ? 'N' : 'R'} · ${(last.speed * 3.6).toFixed(0).padStart(3)} km/h`;
   console.log(`${String(Math.floor(t)).padStart(4)} s · ${sound} · ${tele}`);
+  // Silence has two causes that look the same from here: nothing is playing (or the Mac's output is not
+  // the Multi-Output Device), or macOS has not let this terminal use the microphone, in which case it
+  // hands over silence without a word. Say so once.
+  silentFor = sound === 'sound: silence' ? silentFor + 1 : 0;
+  if (silentFor === 3) console.log('       The input is there but silent. Either nothing is playing through the Multi-Output Device (System Settings → Sound → Output),\n       or this terminal may not use the microphone (System Settings → Privacy & Security → Microphone): macOS then gives silence.');
   sumSq = 0; sumN = 0; perSecond = 0;
 }, 1000);
 
